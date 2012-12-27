@@ -30,7 +30,7 @@ import core.bitop;
 import std.range;
 import std.system;
 import std.traits;
-
+import std.stdio;
 // new imports
 import std.conv;
 
@@ -875,9 +875,13 @@ struct BitArray
         this.init(ba);
     }
 
-    this(int[] ba)
+    this(int[] ns)
     {
-        this(cast(bool[])ba);
+        length = ns.length;
+        foreach(i, n; ns)
+        {
+            this[i] = (n != 0);
+        }
     }
 
     this(string s)
@@ -892,9 +896,11 @@ struct BitArray
     unittest {
         debug(bitarray) printf("BitArray string constructor unittest\n");
 
-        BitArray a = "1011";
+        BitArray a = "1010";
         BitArray b = [true, false, true, false];
+        BitArray c = [1, 0 , 1, 0];
         assert(a == b);
+        assert(b == c);
     }
 
     /***************************************
