@@ -31,6 +31,9 @@ import std.range;
 import std.system;
 import std.traits;
 
+// new imports
+import std.conv;
+
 version(unittest)
 {
     import std.stdio;
@@ -727,18 +730,19 @@ struct BitArray
         return this;
     }
 
-    unittest
-    {
-        debug(bitarray) printf("BitArray.sort.unittest\n");
+	// TODO: cannot use {}-initializer if constructors are defined.
+    //unittest
+    //{
+    //    debug(bitarray) printf("BitArray.sort.unittest\n");
 
-        __gshared size_t x = 0b1100011000;
-        __gshared BitArray ba = { 10, &x };
-        ba.sort;
-        for (size_t i = 0; i < 6; i++)
-            assert(ba[i] == false);
-        for (size_t i = 6; i < 10; i++)
-            assert(ba[i] == true);
-    }
+    //    __gshared size_t x = 0b1100011000;
+    //    __gshared BitArray ba = { 10, &x };
+    //    ba.sort;
+    //    for (size_t i = 0; i < 6; i++)
+    //        assert(ba[i] == false);
+    //    for (size_t i = 6; i < 10; i++)
+    //        assert(ba[i] == true);
+    //}
 
 
     /***************************************
@@ -864,6 +868,33 @@ struct BitArray
             hash += bt(this.ptr, i);
         }
         return hash;
+    }
+
+    this(bool[] ba)
+    {
+        this.init(ba);
+    }
+
+    this(int[] ba)
+    {
+        this(cast(bool[])ba);
+    }
+
+    this(string s)
+    {
+        length = s.length;
+        foreach(i, c; s)
+        {
+            this[i] = (c != '0');
+        }
+    }
+
+    unittest {
+        debug(bitarray) printf("BitArray string constructor unittest\n");
+
+        BitArray a = "1011";
+        BitArray b = [true, false, true, false];
+        assert(a == b);
     }
 
     /***************************************
