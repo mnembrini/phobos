@@ -17,9 +17,9 @@ module std.internal.digest.sha_SSSE3;
 
 import std.conv;
 
-version(OSX)
+version(D_PIC)
 {
-    // Do not use.
+    // Do not use (Bug9378).
 }
 else version(D_InlineAsm_X86)
 {
@@ -146,7 +146,7 @@ version(USE_SSSE3)
     {
         assert(i < 100);
         string s;
-	if (i >= 10)
+        if (i >= 10)
             s ~= cast(char)('0' + (i / 10) % 10);
         return s ~ cast(char)('0' + i % 10);
     }
@@ -214,6 +214,8 @@ version(USE_SSSE3)
      */
     private nothrow pure string[] weave(string[] seq1, string[] seq2, uint dist = 1)
     {
+        import std.algorithm : min;
+
         string[] res = [];
         auto i1 = 0, i2 = 0;
         while (i1 < seq1.length || i2 < seq2.length)

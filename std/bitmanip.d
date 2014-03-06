@@ -27,7 +27,9 @@ module std.bitmanip;
 //debug = bitarray;                // uncomment to turn on debugging printf's
 
 import core.bitop;
+import std.format;
 import std.range;
+import std.string;
 import std.system;
 import std.traits;
 
@@ -67,23 +69,22 @@ private template createAccessors(
     }
     else
     {
-        static if (len + offset <= uint.sizeof * 8)
-            alias uint MasksType;
-        else
-            alias ulong MasksType;
-        enum MasksType
-            maskAllElse = ((1uL << len) - 1u) << offset,
-            signBitCheck = 1uL << (len - 1),
-            extendSign = ~((cast(MasksType)1u << len) - 1);
+        enum ulong
+            maskAllElse = ((~0uL) >> (64 - len)) << offset,
+            signBitCheck = 1uL << (len - 1);
+
         static if (T.min < 0)
         {
             enum long minVal = -(1uL << (len - 1));
             enum ulong maxVal = (1uL << (len - 1)) - 1;
+            alias UT = Unsigned!(T);
+            enum UT extendSign = cast(UT)~((~0uL) >> (64 - len));
         }
         else
         {
             enum ulong minVal = 0;
-            enum ulong maxVal = (1uL << len) - 1;
+            enum ulong maxVal = (~0uL) >> (64 - len);
+            enum extendSign = 0;
         }
 
         static if (is(T == bool))
@@ -102,7 +103,7 @@ private template createAccessors(
         {
             // getter
             enum result = "@property @safe "~T.stringof~" "~name~"() pure nothrow const { auto result = "
-                "("~store~" & "
+                ~"("~store~" & "
                 ~ myToString(maskAllElse) ~ ") >>"
                 ~ myToString(offset) ~ ";"
                 ~ (T.min < 0
@@ -115,9 +116,9 @@ private template createAccessors(
                 ~"assert(v >= "~name~"_min); "
                 ~"assert(v <= "~name~"_max); "
                 ~store~" = cast(typeof("~store~"))"
-                " (("~store~" & ~cast(typeof("~store~"))"~myToString(maskAllElse)~")"
-                " | ((cast(typeof("~store~")) v << "~myToString(offset)~")"
-                " & "~myToString(maskAllElse)~"));}\n"
+                ~" (("~store~" & ~cast(typeof("~store~"))"~myToString(maskAllElse)~")"
+                ~" | ((cast(typeof("~store~")) v << "~myToString(offset)~")"
+                ~" & "~myToString(maskAllElse)~"));}\n"
             // constants
                 ~"enum "~T.stringof~" "~name~"_min = cast("~T.stringof~")"
                 ~myToString(minVal)~"; "
@@ -140,17 +141,17 @@ private template createFields(string store, size_t offset, Ts...)
     static if (!Ts.length)
     {
         static if (offset == ubyte.sizeof * 8)
-            alias ubyte StoreType;
+            alias StoreType = ubyte;
         else static if (offset == ushort.sizeof * 8)
-            alias ushort StoreType;
+            alias StoreType = ushort;
         else static if (offset == uint.sizeof * 8)
-            alias uint StoreType;
+            alias StoreType = uint;
         else static if (offset == ulong.sizeof * 8)
-            alias ulong StoreType;
+            alias StoreType = ulong;
         else
         {
             static assert(false, "Field widths must sum to 8, 16, 32, or 64");
-            alias ulong StoreType; // just to avoid another error msg
+            alias StoreType = ulong; // just to avoid another error msg
         }
         enum result = "private " ~ StoreType.stringof ~ " " ~ store ~ ";";
     }
@@ -216,6 +217,106 @@ template bitfields(T...)
 
 unittest
 {
+    // Degenerate bitfields (#8474 / #11160) tests mixed with range tests
+    struct Test1
+    {
+        mixin(bitfields!(uint, "a", 32,
+                        uint, "b", 4,
+                        uint, "c", 4,
+                        uint, "d", 8,
+                        uint, "e", 16,));
+
+        static assert(Test1.b_min == 0);
+        static assert(Test1.b_max == 15);
+    }
+
+    struct Test2
+    {
+        mixin(bitfields!(bool, "a", 0,
+                        ulong, "b", 64));
+
+        static assert(Test2.b_min == ulong.min);
+        static assert(Test2.b_max == ulong.max);
+    }
+
+    struct Test1b
+    {
+        mixin(bitfields!(bool, "a", 0,
+                        int, "b", 8));
+    }
+
+    struct Test2b
+    {
+        mixin(bitfields!(int, "a", 32,
+                        int, "b", 4,
+                        int, "c", 4,
+                        int, "d", 8,
+                        int, "e", 16,));
+
+        static assert(Test2b.b_min == -8);
+        static assert(Test2b.b_max == 7);
+    }
+
+    struct Test3b
+    {
+        mixin(bitfields!(bool, "a", 0,
+                        long, "b", 64));
+
+        static assert(Test3b.b_min == long.min);
+        static assert(Test3b.b_max == long.max);
+    }
+
+    struct Test4b
+    {
+        mixin(bitfields!(long, "a", 32,
+                        int, "b", 32));
+    }
+
+    // Sign extension tests
+    Test2b t2b;
+    Test4b t4b;
+    t2b.b = -5; assert(t2b.b == -5);
+    t2b.d = -5; assert(t2b.d == -5);
+    t2b.e = -5; assert(t2b.e == -5);
+    t4b.a = -5; assert(t4b.a == -5L);
+}
+
+unittest
+{
+    // Bug #6686
+    union  S {
+        ulong bits = ulong.max;
+        mixin (bitfields!(
+            ulong, "back",  31,
+            ulong, "front", 33)
+        );
+    }
+    S num;
+
+    num.bits = ulong.max;
+    num.back = 1;
+    assert(num.bits == 0xFFFF_FFFF_8000_0001uL);
+}
+
+unittest
+{
+    // Bug #5942
+    struct S
+    {
+        mixin(bitfields!(
+            int, "a" , 32,
+            int, "b" , 32
+        ));
+    }
+
+    S data;
+    data.b = 42;
+    data.a = 1;
+    assert(data.b == 42);
+}
+
+unittest
+{
     struct Test
     {
         mixin(bitfields!(bool, "a", 1,
@@ -266,7 +367,7 @@ unittest
     {
         struct MoreIntegrals {
             bool checkExpectations(uint eu, ushort es, uint ei) { return u == eu && s == es && i == ei; }
-            
+
             mixin(bitfields!(
                   uint, "u", 24,
                   short, "s", 16,
@@ -585,7 +686,7 @@ struct BitArray
         }
         return result;
     }
-    
+
     /** ditto */
     int opApply(scope int delegate(size_t, bool) dg) const
     {
@@ -721,9 +822,8 @@ struct BitArray
                 lo++;
                 hi--;
             }
-        Ldone:
-            ;
         }
+    Ldone:
         return this;
     }
 
@@ -750,19 +850,17 @@ struct BitArray
 
         if (this.length != a2.length)
             return 0;                // not equal
-        byte *p1 = cast(byte*)this.ptr;
-        byte *p2 = cast(byte*)a2.ptr;
-        auto n = this.length / 8;
+        auto p1 = this.ptr;
+        auto p2 = a2.ptr;
+        auto n = this.length / bitsPerSizeT;
         for (i = 0; i < n; i++)
         {
             if (p1[i] != p2[i])
                 return 0;                // not equal
         }
 
-        ubyte mask;
-
-        n = this.length & 7;
-        mask = cast(ubyte)((1 << n) - 1);
+        n = this.length & (bitsPerSizeT-1);
+        size_t mask = (1 << n) - 1;
         //printf("i = %d, n = %d, mask = %x, %x, %x\n", i, n, mask, p1[i], p2[i]);
         return (mask == 0) || (p1[i] & mask) == (p2[i] & mask);
     }
@@ -799,22 +897,20 @@ struct BitArray
         auto len = this.length;
         if (a2.length < len)
             len = a2.length;
-        ubyte* p1 = cast(ubyte*)this.ptr;
-        ubyte* p2 = cast(ubyte*)a2.ptr;
-        auto n = len / 8;
+        auto p1 = this.ptr;
+        auto p2 = a2.ptr;
+        auto n = len / bitsPerSizeT;
         for (i = 0; i < n; i++)
         {
             if (p1[i] != p2[i])
                 break;                // not equal
         }
-        for (uint j = i * 8; j < len; j++)
+        for (size_t j = 0; j < len-i * bitsPerSizeT; j++)
         {
-            ubyte mask = cast(ubyte)(1 << j);
-            int c;
-
-            c = cast(int)(p1[i] & mask) - cast(int)(p2[i] & mask);
+            size_t mask = cast(size_t)(1 << j);
+            auto c = (cast(long)(p1[i] & mask) - cast(long)(p2[i] & mask));
             if (c)
-                return c;
+                return c > 0 ? 1 : -1;
         }
         return cast(int)this.len - cast(int)a2.length;
     }
@@ -844,6 +940,18 @@ struct BitArray
         assert(a == e);
         assert(a <= e);
         assert(a >= e);
+
+        bool[] v;
+        for (int i = 1; i < 256; i++)
+        {
+            v.length = i;
+            v[] = false;
+            BitArray x; x.init(v);
+            v[i-1] = true;
+            BitArray y; y.init(v);
+            assert(x < y);
+            assert(x <= y);
+        }
     }
 
     /***************************************
@@ -881,7 +989,9 @@ struct BitArray
 
     /***************************************
      * Map the $(D BitArray) onto $(D v), with $(D numbits) being the number of bits
-     * in the array. Does not copy the data.
+     * in the array. Does not copy the data. $(D v.length) must be a multiple of
+     * $(D size_t.sizeof). If there are unmapped bits in the final mapped word then
+     * these will be set to 0.
      *
      * This is the inverse of $(D opCast).
      */
@@ -889,12 +999,18 @@ struct BitArray
     in
     {
         assert(numbits <= v.length * 8);
-        assert((v.length & 3) == 0);
+        assert(v.length % size_t.sizeof == 0);
     }
     body
     {
         ptr = cast(size_t*)v.ptr;
         len = numbits;
+        size_t finalBits = len % bitsPerSizeT;
+        if (finalBits != 0)
+        {
+            // Need to mask away extraneous bits from v.
+            ptr[dim - 1] &= (cast(size_t)1 << finalBits) - 1;
+        }
     }
 
     unittest
@@ -1421,6 +1537,158 @@ struct BitArray
         assert(c[1] == 1);
         assert(c[2] == 0);
     }
+
+    /***************************************
+     * Return a string representation of this BitArray.
+     *
+     * Two format specifiers are supported:
+     * $(LI $(B %s) which prints the bits as an array, and)
+     * $(LI $(B %b) which prints the bits as 8-bit byte packets)
+     * separated with an underscore.
+     */
+    void toString(scope void delegate(const(char)[]) sink,
+                  FormatSpec!char fmt) const
+    {
+        switch(fmt.spec)
+        {
+            case 'b':
+                return formatBitString(sink);
+            case 's':
+                return formatBitArray(sink);
+            default:
+                throw new Exception("Unknown format specifier: %" ~ fmt.spec);
+        }
+    }
+
+    ///
+    unittest
+    {
+        debug(bitarray) printf("BitArray.toString unittest\n");
+        BitArray b;
+        b.init([0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1]);
+
+        auto s1 = format("%s", b);
+        assert(s1 == "[0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1]");
+
+        auto s2 = format("%b", b);
+        assert(s2 == "00001111_00001111");
+    }
+
+    /***************************************
+     * Return a lazy range of the indices of set bits.
+     */
+    @property auto bitsSet()
+    {
+        return iota(dim).
+               filter!(i => ptr[i]).
+               map!(i => BitsSet!size_t(ptr[i], i * bitsPerSizeT)).
+               joiner();
+    }
+
+    ///
+    unittest
+    {
+        BitArray b1;
+        b1.init([0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1]);
+        assert(b1.bitsSet.equal([4, 5, 6, 7, 12, 13, 14, 15]));
+
+        BitArray b2;
+        b2.length = 1000;
+        b2[333] = true;
+        b2[666] = true;
+        b2[999] = true;
+        assert(b2.bitsSet.equal([333, 666, 999]));
+    }
+
+    unittest
+    {
+        debug(bitarray) printf("BitArray.bitsSet unittest\n");
+        BitArray b;
+        enum wordBits = size_t.sizeof * 8;
+        b.init([size_t.max], 0);
+        assert(b.bitsSet.empty);
+        b.init([size_t.max], 1);
+        assert(b.bitsSet.equal([0]));
+        b.init([size_t.max], wordBits);
+        assert(b.bitsSet.equal(iota(wordBits)));
+        b.init([size_t.max, size_t.max], wordBits);
+        assert(b.bitsSet.equal(iota(wordBits)));
+        b.init([size_t.max, size_t.max], wordBits + 1);
+        assert(b.bitsSet.equal(iota(wordBits + 1)));
+        b.init([size_t.max, size_t.max], wordBits * 2);
+        assert(b.bitsSet.equal(iota(wordBits * 2)));
+    }
+
+    private void formatBitString(scope void delegate(const(char)[]) sink) const
+    {
+        if (!length)
+            return;
+
+        auto leftover = len % 8;
+        foreach (idx; 0 .. leftover)
+        {
+            char[1] res = cast(char)(bt(ptr, idx) + '0');
+            sink.put(res[]);
+        }
+
+        if (leftover && len > 8)
+            sink.put("_");
+
+        size_t count;
+        foreach (idx; leftover .. len)
+        {
+            char[1] res = cast(char)(bt(ptr, idx) + '0');
+            sink.put(res[]);
+            if (++count == 8 && idx != len - 1)
+            {
+                sink.put("_");
+                count = 0;
+            }
+        }
+    }
+
+    private void formatBitArray(scope void delegate(const(char)[]) sink) const
+    {
+        sink("[");
+        foreach (idx; 0 .. len)
+        {
+            char[1] res = cast(char)(bt(ptr, idx) + '0');
+            sink(res[]);
+            if (idx+1 < len)
+                sink(", ");
+        }
+        sink("]");
+    }
+}
+
+unittest
+{
+    BitArray b;
+
+    b.init([]);
+    assert(format("%s", b) == "[]");
+    assert(format("%b", b) is null);
+
+    b.init([1]);
+    assert(format("%s", b) == "[1]");
+    assert(format("%b", b) == "1");
+
+    b.init([0, 0, 0, 0]);
+    assert(format("%b", b) == "0000");
+
+    b.init([0, 0, 0, 0, 1, 1, 1, 1]);
+    assert(format("%s", b) == "[0, 0, 0, 0, 1, 1, 1, 1]");
+    assert(format("%b", b) == "00001111");
+
+    b.init([0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1]);
+    assert(format("%s", b) == "[0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1]");
+    assert(format("%b", b) == "00001111_00001111");
+
+    b.init([1, 0, 0, 0, 0, 1, 1, 1, 1]);
+    assert(format("%b", b) == "1_00001111");
+
+    b.init([1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1]);
+    assert(format("%b", b) == "1_00001111_00001111");
 }
 
 /++
@@ -1489,8 +1757,7 @@ unittest
         static if(isSigned!T)
             assert(swapEndian(swapEndian(cast(T)0)) == 0);
 
-        // @@@BUG6354@@@
-        /+
+        // used to trigger BUG6354
         static if(T.sizeof > 1 && isUnsigned!T)
         {
             T left = 0xffU;
@@ -1505,7 +1772,6 @@ unittest
                 right <<= 8;
             }
         }
-        +/
     }
 }
 
@@ -1954,7 +2220,7 @@ private template canSwapEndianness(T)
 unittest
 {
     foreach(T; TypeTuple!(bool, ubyte, byte, ushort, short, uint, int, ulong,
-                          long, char, wchar, dchar, float, double)) 
+                          long, char, wchar, dchar, float, double))
     {
         static assert(canSwapEndianness!(T));
         static assert(canSwapEndianness!(const T));
@@ -2163,7 +2429,7 @@ unittest
         ubyte[] buffer = [66, 0, 0, 0, 65, 200, 0, 0];
         assert(buffer.peek!float()== 32.0);
         assert(buffer.peek!float(4) == 25.0f);
-        
+
         size_t index = 0;
         assert(buffer.peek!float(&index) == 32.0f);
         assert(index == 4);
@@ -2177,7 +2443,7 @@ unittest
         ubyte[] buffer = [64, 64, 0, 0, 0, 0, 0, 0, 64, 57, 0, 0, 0, 0, 0, 0];
         assert(buffer.peek!double() == 32.0);
         assert(buffer.peek!double(8) == 25.0);
-        
+
         size_t index = 0;
         assert(buffer.peek!double(&index) == 32.0);
         assert(index == 8);
@@ -2189,7 +2455,7 @@ unittest
     {
         //enum
         ubyte[] buffer = [0, 0, 0, 10, 0, 0, 0, 20, 0, 0, 0, 30];
-        
+
         enum Foo
         {
             one = 10,
@@ -2721,7 +2987,7 @@ unittest
     {
         //char (8bit)
         ubyte[] buffer = [0, 0, 0];
-        
+
         buffer.write!char('a', 0);
         assert(buffer == [97, 0, 0]);
 
@@ -2745,7 +3011,7 @@ unittest
     {
         //wchar (16bit - 2x ubyte)
         ubyte[] buffer = [0, 0, 0, 0];
-        
+
         buffer.write!wchar('ą', 0);
         assert(buffer == [1, 5, 0, 0]);
 
@@ -2765,7 +3031,7 @@ unittest
     {
         //dchar (32bit - 4x ubyte)
         ubyte[] buffer = [0, 0, 0, 0, 0, 0, 0, 0];
-        
+
         buffer.write!dchar('ą', 0);
         assert(buffer == [0, 0, 1, 5, 0, 0, 0, 0]);
 
@@ -2780,7 +3046,7 @@ unittest
         buffer.write!dchar('ą', &index);
         assert(buffer == [0, 0, 1, 7, 0, 0, 1, 5]);
         assert(index == 8);
-    }     
+    }
 
     {
         //float (32bit - 4x ubyte)
@@ -2811,7 +3077,7 @@ unittest
 
         buffer.write!double(25.0, 8);
         assert(buffer == [64, 64, 0, 0, 0, 0, 0, 0, 64, 57, 0, 0, 0, 0, 0, 0]);
-        
+
         size_t index = 0;
         buffer.write!double(25.0, &index);
         assert(buffer == [64, 57, 0, 0, 0, 0, 0, 0, 64, 57, 0, 0, 0, 0, 0, 0]);
@@ -2825,7 +3091,7 @@ unittest
     {
         //enum
         ubyte[] buffer = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-        
+
         enum Foo
         {
             one = 10,
@@ -3014,19 +3280,19 @@ unittest
     {
         //char wchar dchar
         auto buffer = appender!(const ubyte[])();
-        
+
         buffer.append!char('a');
         assert(buffer.data == [97]);
 
         buffer.append!char('b');
         assert(buffer.data == [97, 98]);
-        
+
         buffer.append!wchar('ą');
         assert(buffer.data == [97, 98, 1, 5]);
 
         buffer.append!dchar('ą');
         assert(buffer.data == [97, 98, 1, 5, 0, 0, 1, 5]);
-    }     
+    }
 
     {
         //float double
@@ -3042,7 +3308,7 @@ unittest
     {
         //enum
         auto buffer = appender!(const ubyte[])();
-        
+
         enum Foo
         {
             one = 10,
@@ -3135,7 +3401,7 @@ unittest
     foreach(endianness; TypeTuple!(Endian.bigEndian, Endian.littleEndian))
     {
         auto toWrite = appender!(ubyte[])();
-        alias TypeTuple!(uint, int, long, ulong, short, ubyte, ushort, byte, uint) Types;
+        alias Types = TypeTuple!(uint, int, long, ulong, short, ubyte, ushort, byte, uint);
         ulong[] values = [42, -11, long.max, 1098911981329L, 16, 255, 19012, 2, 17];
         assert(Types.length == values.length);
 
@@ -3143,7 +3409,7 @@ unittest
         size_t length = 0;
         foreach(T; Types)
         {
-            toWrite.append!T(cast(T)values[index++]);
+            toWrite.append!(T, endianness)(cast(T)values[index++]);
             length += T.sizeof;
         }
 
@@ -3153,11 +3419,11 @@ unittest
         index = 0;
         foreach(T; Types)
         {
-            assert(toRead.peek!T() == values[index], format("Failed Index: %s", index));
-            assert(toRead.peek!T(0) == values[index], format("Failed Index: %s", index));
+            assert(toRead.peek!(T, endianness)() == values[index], format("Failed Index: %s", index));
+            assert(toRead.peek!(T, endianness)(0) == values[index], format("Failed Index: %s", index));
             assert(toRead.length == length,
                    format("Failed Index [%s], Actual Length: %s", index, toRead.length));
-            assert(toRead.read!T() == values[index], format("Failed Index: %s", index));
+            assert(toRead.read!(T, endianness)() == values[index], format("Failed Index: %s", index));
             length -= T.sizeof;
             assert(toRead.length == length,
                    format("Failed Index [%s], Actual Length: %s", index, toRead.length));
@@ -3165,4 +3431,238 @@ unittest
         }
         assert(toRead.empty);
     }
+}
+
+/**
+Counts the number of trailing zeros in the binary representation of $(D value).
+For signed integers, the sign bit is included in the count.
+*/
+private uint countTrailingZeros(T)(T value)
+    if (isIntegral!T)
+{
+    // bsf doesn't give the correct result for 0.
+    if (!value)
+        return 8 * T.sizeof;
+
+    static if (T.sizeof == 8 && size_t.sizeof == 4)
+    {
+        // bsf's parameter is size_t, so it doesn't work with 64-bit integers
+        // on a 32-bit machine. For this case, we call bsf on each 32-bit half.
+        uint lower = cast(uint)value;
+        if (lower)
+            return bsf(lower);
+        value >>>= 32;
+        return 32 + bsf(cast(uint)value);
+    }
+    else
+    {
+        return bsf(value);
+    }
+}
+
+///
+unittest
+{
+    assert(countTrailingZeros(1) == 0);
+    assert(countTrailingZeros(0) == 32);
+    assert(countTrailingZeros(int.min) == 31);
+    assert(countTrailingZeros(256) == 8);
+}
+
+unittest
+{
+    foreach (T; TypeTuple!(byte, ubyte, short, ushort, int, uint, long, ulong))
+    {
+        assert(countTrailingZeros(cast(T)0) == 8 * T.sizeof);
+        assert(countTrailingZeros(cast(T)1) == 0);
+        assert(countTrailingZeros(cast(T)2) == 1);
+        assert(countTrailingZeros(cast(T)3) == 0);
+        assert(countTrailingZeros(cast(T)4) == 2);
+        assert(countTrailingZeros(cast(T)5) == 0);
+        assert(countTrailingZeros(cast(T)64) == 6);
+        static if (isSigned!T)
+        {
+            assert(countTrailingZeros(cast(T)-1) == 0);
+            assert(countTrailingZeros(T.min) == 8 * T.sizeof - 1);
+        }
+        else
+        {
+            assert(countTrailingZeros(T.max) == 0);
+        }
+    }
+    assert(countTrailingZeros(1_000_000) == 6);
+    foreach (i; 0..63)
+        assert(countTrailingZeros(1UL << i) == i);
+}
+
+/**
+Counts the number of set bits in the binary representation of $(D value).
+For signed integers, the sign bit is included in the count.
+*/
+private uint countBitsSet(T)(T value)
+    if (isIntegral!T)
+{
+    // http://graphics.stanford.edu/~seander/bithacks.html#CountBitsSetParallel
+    static if (T.sizeof == 8)
+    {
+        T c = value - ((value >> 1) & 0x55555555_55555555);
+        c = ((c >> 2) & 0x33333333_33333333) + (c & 0x33333333_33333333);
+        c = ((c >> 4) + c) & 0x0F0F0F0F_0F0F0F0F;
+        c = ((c >> 8) + c) & 0x00FF00FF_00FF00FF;
+        c = ((c >> 16) + c) & 0x0000FFFF_0000FFFF;
+        c = ((c >> 32) + c) & 0x00000000_FFFFFFFF;
+    }
+    else static if (T.sizeof == 4)
+    {
+        T c = value - ((value >> 1) & 0x55555555);
+        c = ((c >> 2) & 0x33333333) + (c & 0x33333333);
+        c = ((c >> 4) + c) & 0x0F0F0F0F;
+        c = ((c >> 8) + c) & 0x00FF00FF;
+        c = ((c >> 16) + c) & 0x0000FFFF;
+    }
+    else static if (T.sizeof == 2)
+    {
+        uint c = value - ((value >> 1) & 0x5555);
+        c = ((c >> 2) & 0x3333) + (c & 0X3333);
+        c = ((c >> 4) + c) & 0x0F0F;
+        c = ((c >> 8) + c) & 0x00FF;
+    }
+    else static if (T.sizeof == 1)
+    {
+        uint c = value - ((value >> 1) & 0x55);
+        c = ((c >> 2) & 0x33) + (c & 0X33);
+        c = ((c >> 4) + c) & 0x0F;
+    }
+    else
+    {
+        static assert("countBitsSet only supports 1, 2, 4, or 8 byte sized integers.");
+    }
+    return cast(uint)c;
+}
+
+///
+unittest
+{
+    assert(countBitsSet(1) == 1);
+    assert(countBitsSet(0) == 0);
+    assert(countBitsSet(int.min) == 1);
+    assert(countBitsSet(uint.max) == 32);
+}
+
+unittest
+{
+    foreach (T; TypeTuple!(byte, ubyte, short, ushort, int, uint, long, ulong))
+    {
+        assert(countBitsSet(cast(T)0) == 0);
+        assert(countBitsSet(cast(T)1) == 1);
+        assert(countBitsSet(cast(T)2) == 1);
+        assert(countBitsSet(cast(T)3) == 2);
+        assert(countBitsSet(cast(T)4) == 1);
+        assert(countBitsSet(cast(T)5) == 2);
+        assert(countBitsSet(cast(T)127) == 7);
+        static if (isSigned!T)
+        {
+            assert(countBitsSet(cast(T)-1) == 8 * T.sizeof);
+            assert(countBitsSet(T.min) == 1);
+        }
+        else
+        {
+            assert(countBitsSet(T.max) == 8 * T.sizeof);
+        }
+    }
+    assert(countBitsSet(1_000_000) == 7);
+    foreach (i; 0..63)
+        assert(countBitsSet(1UL << i) == 1);
+}
+
+private struct BitsSet(T)
+{
+    static assert(T.sizeof <= 8, "bitsSet assumes T is no more than 64-bit.");
+
+    this(T value, size_t startIndex = 0)
+    {
+        _value = value;
+        uint n = countTrailingZeros(value);
+        _index = startIndex + n;
+        _value >>>= n;
+    }
+
+    @property size_t front()
+    {
+        return _index;
+    }
+
+    @property bool empty() const
+    {
+        return !_value;
+    }
+
+    void popFront()
+    {
+        assert(_value, "Cannot call popFront on empty range.");
+
+        _value >>>= 1;
+        uint n = countTrailingZeros(_value);
+        _value >>>= n;
+        _index += n + 1;
+    }
+
+    @property auto save()
+    {
+        return this;
+    }
+
+    @property size_t length()
+    {
+        return countBitsSet(_value);
+    }
+
+    private T _value;
+    private size_t _index;
+}
+
+/**
+Range that iterates the indices of the set bits in $(D value).
+Index 0 corresponds to the least significant bit.
+For signed integers, the highest index corresponds to the sign bit.
+*/
+auto bitsSet(T)(T value)
+    if (isIntegral!T)
+{
+    return BitsSet!T(value);
+}
+
+///
+unittest
+{
+    assert(bitsSet(1).equal([0]));
+    assert(bitsSet(5).equal([0, 2]));
+    assert(bitsSet(-1).equal(iota(32)));
+    assert(bitsSet(int.min).equal([31]));
+}
+
+unittest
+{
+    foreach (T; TypeTuple!(byte, ubyte, short, ushort, int, uint, long, ulong))
+    {
+        assert(bitsSet(cast(T)0).empty);
+        assert(bitsSet(cast(T)1).equal([0]));
+        assert(bitsSet(cast(T)2).equal([1]));
+        assert(bitsSet(cast(T)3).equal([0, 1]));
+        assert(bitsSet(cast(T)4).equal([2]));
+        assert(bitsSet(cast(T)5).equal([0, 2]));
+        assert(bitsSet(cast(T)127).equal(iota(7)));
+        static if (isSigned!T)
+        {
+            assert(bitsSet(cast(T)-1).equal(iota(8 * T.sizeof)));
+            assert(bitsSet(T.min).equal([8 * T.sizeof - 1]));
+        }
+        else
+        {
+            assert(bitsSet(T.max).equal(iota(8 * T.sizeof)));
+        }
+    }
+    assert(bitsSet(1_000_000).equal([6, 9, 14, 16, 17, 18, 19]));
+    foreach (i; 0..63)
+        assert(bitsSet(1UL << i).equal([i]));
 }

@@ -4,7 +4,7 @@
 Utilities for manipulating files and scanning directories. Functions
 in this module handle files as a unit, e.g., read or write one _file
 at a time. For opening files and manipulating them via handles refer
-to module $(D $(LINK2 std_stdio.html,std.stdio)).
+to module $(LINK2 std_stdio.html,$(D std.stdio)).
 
 Macros:
 WIKI = Phobos/StdFile
@@ -25,8 +25,6 @@ import core.stdc.stdio, core.stdc.stdlib, core.stdc.string,
        std.range, std.stdio, std.string, std.traits,
        std.typecons, std.typetuple, std.utf;
 
-import std.metastrings; //For generating deprecation messages only. Remove once
-                        //deprecation path complete.
 
 version (Windows)
 {
@@ -44,17 +42,16 @@ version (unittest)
 {
     import core.thread;
 
-    private @property string deleteme()
+    private @property string deleteme() @safe
     {
         static _deleteme = "deleteme.dmd.unittest.pid";
         static _first = true;
 
         if(_first)
         {
-            _deleteme = buildPath(tempDir(), _deleteme) ~ to!string(getpid());
+            _deleteme = buildPath(tempDir(), _deleteme) ~ to!string(thisProcessID);
             _first = false;
         }
-
 
         return _deleteme;
     }
@@ -70,10 +67,11 @@ version (Windows)
     // Required by tempPath():
     private extern(Windows) DWORD GetTempPathW(DWORD nBufferLength,
                                                LPWSTR lpBuffer);
-}
-else version (Posix)
-{
-    deprecated alias stat_t struct_stat64;
+    // Required by rename():
+    enum MOVEFILE_REPLACE_EXISTING = 1;
+    private extern(Windows) DWORD MoveFileExW(LPCWSTR lpExistingFileName,
+                                              LPCWSTR lpNewFileName,
+                                              DWORD dwFlags);
 }
 // }}}
 
@@ -97,7 +95,7 @@ class FileException : Exception
             file = The file where the error occurred.
             line = The line where the error occurred.
      +/
-    this(in char[] name, in char[] msg, string file = __FILE__, size_t line = __LINE__)
+    this(in char[] name, in char[] msg, string file = __FILE__, size_t line = __LINE__) @safe pure
     {
         if(msg.empty)
             super(name.idup, file, line);
@@ -112,15 +110,17 @@ class FileException : Exception
         in Windows, $(D_PARAM errno) in Posix).
 
         Params:
-            name = Name of file for which the error occurred.
-            msg  = Message describing the error.
-            file = The file where the error occurred.
-            line = The line where the error occurred.
+            name  = Name of file for which the error occurred.
+            errno = The error number.
+            file  = The file where the error occurred.
+                    Defaults to $(D __FILE__).
+            line  = The line where the error occurred.
+                    Defaults to $(D __LINE__).
      +/
     version(Windows) this(in char[] name,
                           uint errno = .GetLastError(),
                           string file = __FILE__,
-                          size_t line = __LINE__)
+                          size_t line = __LINE__) @safe
     {
         this(name, sysErrorString(errno), file, line);
         this.errno = errno;
@@ -128,7 +128,7 @@ class FileException : Exception
     else version(Posix) this(in char[] name,
                              uint errno = .errno,
                              string file = __FILE__,
-                             size_t line = __LINE__)
+                             size_t line = __LINE__) @trusted
     {
         auto s = strerror(errno);
         this(name, to!string(s), file, line);
@@ -181,11 +181,11 @@ void[] read(in char[] name, size_t upTo = size_t.max)
 {
     version(Windows)
     {
-        alias TypeTuple!(GENERIC_READ,
+        alias defaults =
+            TypeTuple!(GENERIC_READ,
                 FILE_SHARE_READ, (SECURITY_ATTRIBUTES*).init, OPEN_EXISTING,
                 FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN,
-                HANDLE.init)
-            defaults;
+                HANDLE.init);
         auto h = CreateFileW(std.utf.toUTF16z(name), defaults);
 
         cenforce(h != INVALID_HANDLE_VALUE, name);
@@ -316,10 +316,10 @@ void write(in char[] name, const void[] buffer)
 {
     version(Windows)
     {
-        alias TypeTuple!(GENERIC_WRITE, 0, null, CREATE_ALWAYS,
+        alias defaults =
+            TypeTuple!(GENERIC_WRITE, 0, null, CREATE_ALWAYS,
                 FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN,
-                HANDLE.init)
-            defaults;
+                HANDLE.init);
         auto h = CreateFileW(std.utf.toUTF16z(name), defaults);
 
         cenforce(h != INVALID_HANDLE_VALUE, name);
@@ -355,9 +355,9 @@ void append(in char[] name, in void[] buffer)
 {
     version(Windows)
     {
-        alias TypeTuple!(GENERIC_WRITE,0,null,OPEN_ALWAYS,
-                FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN,HANDLE.init)
-            defaults;
+        alias defaults =
+            TypeTuple!(GENERIC_WRITE,0,null,OPEN_ALWAYS,
+                FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN,HANDLE.init);
 
         auto h = CreateFileW(std.utf.toUTF16z(name), defaults);
 
@@ -393,13 +393,14 @@ version(Posix) private void writeImpl(in char[] name,
 
 /***************************************************
  * Rename file $(D from) to $(D to).
+ * If the target file exists, it is overwritten.
  * Throws: $(D FileException) on error.
  */
 void rename(in char[] from, in char[] to)
 {
     version(Windows)
     {
-        enforce(MoveFileW(std.utf.toUTF16z(from), std.utf.toUTF16z(to)),
+        enforce(MoveFileExW(std.utf.toUTF16z(from), std.utf.toUTF16z(to), MOVEFILE_REPLACE_EXISTING),
                 new FileException(
                     text("Attempting to rename file ", from, " to ",
                             to)));
@@ -407,6 +408,19 @@ void rename(in char[] from, in char[] to)
     else version(Posix)
         cenforce(core.stdc.stdio.rename(toStringz(from), toStringz(to)) == 0, to);
 }
+
+unittest
+{
+    auto t1 = deleteme, t2 = deleteme~"2";
+    scope(exit) foreach (t; [t1, t2]) if (t.exists) t.remove();
+    write(t1, "1");
+    rename(t1, t2);
+    assert(readText(t2) == "1");
+    write(t1, "2");
+    rename(t1, t2);
+    assert(readText(t2) == "2");
+}
+
 
 /***************************************************
 Delete file $(D name).
@@ -471,26 +485,26 @@ unittest
 
 
 /++
-    Get the access and modified times of file $(D name).
+    Get the access and modified times of file or folder $(D name).
 
     Params:
-        name                 = File name to get times for.
-        fileAccessTime       = Time the file was last accessed.
-        fileModificationTime = Time the file was last modified.
+        name             = File/Folder name to get times for.
+        accessTime       = Time the file/folder was last accessed.
+        modificationTime = Time the file/folder was last modified.
 
     Throws:
         $(D FileException) on error.
  +/
 void getTimes(in char[] name,
-              out SysTime fileAccessTime,
-              out SysTime fileModificationTime)
+              out SysTime accessTime,
+              out SysTime modificationTime)
 {
     version(Windows)
     {
         with (getFileAttributesWin(name))
         {
-            fileAccessTime = std.datetime.FILETIMEToSysTime(&ftLastAccessTime);
-            fileModificationTime = std.datetime.FILETIMEToSysTime(&ftLastWriteTime);
+            accessTime = std.datetime.FILETIMEToSysTime(&ftLastAccessTime);
+            modificationTime = std.datetime.FILETIMEToSysTime(&ftLastWriteTime);
         }
     }
     else version(Posix)
@@ -499,8 +513,8 @@ void getTimes(in char[] name,
 
         cenforce(stat(toStringz(name), &statbuf) == 0, name);
 
-        fileAccessTime = SysTime(unixTimeToStdTime(statbuf.st_atime));
-        fileModificationTime = SysTime(unixTimeToStdTime(statbuf.st_mtime));
+        accessTime = SysTime(unixTimeToStdTime(statbuf.st_atime));
+        modificationTime = SysTime(unixTimeToStdTime(statbuf.st_mtime));
     }
 }
 
@@ -655,6 +669,78 @@ version(Windows) unittest
 
 
 /++
+    Set access/modified times of file or folder $(D name).
+
+    Params:
+        name             = File/Folder name to get times for.
+        accessTime       = Time the file/folder was last accessed.
+        modificationTime = Time the file/folder was last modified.
+
+    Throws:
+        $(D FileException) on error.
+ +/
+void setTimes(in char[] name,
+              SysTime accessTime,
+              SysTime modificationTime)
+{
+    version(Windows)
+    {
+        const ta = SysTimeToFILETIME(accessTime);
+        const tm = SysTimeToFILETIME(modificationTime);
+        alias defaults =
+            TypeTuple!(GENERIC_WRITE,
+                         0,
+                         null,
+                         OPEN_EXISTING,
+                         FILE_ATTRIBUTE_NORMAL |
+                         FILE_ATTRIBUTE_DIRECTORY |
+                         FILE_FLAG_BACKUP_SEMANTICS,
+                         HANDLE.init);
+        auto h = CreateFileW(std.utf.toUTF16z(name), defaults);
+
+        cenforce(h != INVALID_HANDLE_VALUE, name);
+
+        scope(exit)
+            cenforce(CloseHandle(h), name);
+
+        cenforce(SetFileTime(h, null, &ta, &tm), name);
+    }
+    else version(Posix)
+    {
+        timeval[2] t = void;
+
+        t[0] = accessTime.toTimeVal();
+        t[1] = modificationTime.toTimeVal();
+
+        cenforce(utimes(toStringz(name), t) == 0, name);
+    }
+}
+
+unittest
+{
+    string dir = deleteme ~ r".dir/a/b/c";
+    string file = dir ~ "/file";
+
+    if (!exists(dir)) mkdirRecurse(dir);
+    { auto f = File(file, "w"); }
+
+    foreach (path; [file, dir])  // test file and dir
+    {
+        SysTime atime = SysTime(DateTime(2010, 10, 4, 0, 0, 30));
+        SysTime mtime = SysTime(DateTime(2011, 10, 4, 0, 0, 30));
+        setTimes(path, atime, mtime);
+
+        SysTime atime_res;
+        SysTime mtime_res;
+        getTimes(path, atime_res, mtime_res);
+        assert(atime == atime_res);
+        assert(mtime == mtime_res);
+    }
+
+    rmdirRecurse(dir);
+}
+
+/++
     Returns the time that the given file was last modified.
 
     Throws:
@@ -759,7 +845,7 @@ unittest
 /++
     Returns whether the given file (or directory) exists.
  +/
-@property bool exists(in char[] name)
+bool exists(in char[] name) @trusted
 {
     version(Windows)
     {
@@ -790,7 +876,7 @@ unittest
         */
 
         stat_t statbuf = void;
-        return stat(toStringz(name), &statbuf) == 0;
+        return lstat(toStringz(name), &statbuf) == 0;
     }
 }
 
@@ -821,6 +907,8 @@ unittest
 
  Params:
  name = The file to get the attributes of.
+
+ Throws: $(D FileException) on error.
   +/
 uint getAttributes(in char[] name)
 {
@@ -870,6 +958,26 @@ uint getLinkAttributes(in char[] name)
         stat_t lstatbuf = void;
         cenforce(lstat(toStringz(name), &lstatbuf) == 0, name);
         return lstatbuf.st_mode;
+    }
+}
+
+
+/++
+    Set the attributes of the given file.
+
+    Throws:
+        $(D FileException) if the given file does not exist.
+ +/
+void setAttributes(in char[] name, uint attributes)
+{
+    version (Windows)
+    {
+        cenforce(SetFileAttributesW(std.utf.toUTF16z(name), attributes), name);
+    }
+    else version (Posix)
+    {
+        assert(attributes <= mode_t.max);
+        cenforce(!chmod(toStringz(name), cast(mode_t)attributes), name);
     }
 }
 
@@ -990,7 +1098,7 @@ unittest
     possible for both $(D isFile) and $(D isDir) to be $(D false) for a
     particular file (in which case, it's a special file). You can use
     $(D getAttributes) to get the attributes to figure out what type of special
-    it is, or you can use $(D dirEntry) to get at its $(D statBuf), which is the
+    it is, or you can use $(D DirEntry) to get at its $(D statBuf), which is the
     result from $(D stat). In either case, see the man page for $(D stat) for
     more information.
 
@@ -1258,32 +1366,71 @@ void mkdir(in char[] pathname)
     }
 }
 
+// Same as mkdir but ignores "already exists" errors.
+// Returns: "true" if the directory was created,
+//   "false" if it already existed.
+private bool ensureDirExists(in char[] pathname)
+{
+    version(Windows)
+    {
+        if (CreateDirectoryW(std.utf.toUTF16z(pathname), null))
+            return true;
+        cenforce(GetLastError() == ERROR_ALREADY_EXISTS, pathname.idup);
+    }
+    else version(Posix)
+    {
+        if (core.sys.posix.sys.stat.mkdir(toStringz(pathname), octal!777) == 0)
+            return true;
+        cenforce(errno == EEXIST, pathname);
+    }
+    enforce(pathname.isDir, new FileException(pathname.idup));
+    return false;
+}
+
 /****************************************************
  * Make directory and all parent directories as needed.
+ *
+ * Throws: $(D FileException) on error.
  */
 
 void mkdirRecurse(in char[] pathname)
 {
     const left = dirName(pathname);
-    if (!exists(left))
+    if (left.length != pathname.length && !exists(left))
     {
-        version (Windows)
-        {   /* Prevent infinite recursion if left is "d:\" and
-             * drive d does not exist.
-             */
-            if (left.length >= 3 && left[$ - 2] == ':')
-                throw new FileException(left.idup);
-        }
         mkdirRecurse(left);
     }
     if (!baseName(pathname).empty)
     {
-        mkdir(pathname);
+        ensureDirExists(pathname);
     }
 }
 
 unittest
 {
+    {
+        immutable basepath = deleteme ~ "_dir";
+        scope(exit) rmdirRecurse(basepath);
+
+        auto path = buildPath(basepath, "a", "..", "b");
+        mkdirRecurse(path);
+        path = path.buildNormalizedPath;
+        assert(path.isDir);
+
+        path = buildPath(basepath, "c");
+        write(path, "");
+        assertThrown!FileException(mkdirRecurse(path));
+
+        path = buildPath(basepath, "d");
+        mkdirRecurse(path);
+        mkdirRecurse(path); // should not throw
+    }
+
+    version(Windows)
+    {
+        assertThrown!FileException(mkdirRecurse(`1:\foobar`));
+    }
+
     // bug3570
     {
         immutable basepath = deleteme ~ "_dir";
@@ -1435,7 +1582,7 @@ else version(Posix) string readLink(C)(const(C)[] link)
         dynamicBuffer.length = dynamicBuffer.length * 3 / 2;
     }
 
-    throw new FileException(format("Path for %s is too long to read.", link));
+    throw new FileException(to!string(link), "Path is too long to read.");
 }
 
 version(Posix) unittest
@@ -1500,30 +1647,130 @@ unittest
     assert(s.length);
 }
 
+version (OSX)
+    private extern (C) int _NSGetExecutablePath(char* buf, uint* bufsize);
+else version (FreeBSD)
+    private extern (C) int sysctl (const int* name, uint namelen, void* oldp,
+        size_t* oldlenp, const void* newp, size_t newlen);
+
+/**
+ * Returns the full path of the current executable.
+ *
+ * Throws:
+ * $(XREF object, Exception)
+ */
+@trusted string thisExePath ()
+{
+    version (OSX)
+    {
+        import core.sys.posix.stdlib : realpath;
+
+        uint size;
+
+        _NSGetExecutablePath(null, &size); // get the length of the path
+        auto buffer = new char[size];
+        _NSGetExecutablePath(buffer.ptr, &size);
+
+        auto absolutePath = realpath(buffer.ptr, null); // let the function allocate
+
+        scope (exit)
+        {
+            if (absolutePath)
+                free(absolutePath);
+        }
+
+        errnoEnforce(absolutePath);
+        return to!(string)(absolutePath);
+    }
+    else version (linux)
+    {
+        return readLink("/proc/self/exe");
+    }
+    else version (Windows)
+    {
+        wchar[MAX_PATH] buf;
+        wchar[] buffer = buf[];
+
+        while (true)
+        {
+            auto len = GetModuleFileNameW(null, buffer.ptr, cast(DWORD) buffer.length);
+            enforce(len, sysErrorString(GetLastError()));
+            if (len != buffer.length)
+                return to!(string)(buffer[0 .. len]);
+            buffer.length *= 2;
+        }
+    }
+    else version (FreeBSD)
+    {
+        enum
+        {
+            CTL_KERN = 1,
+            KERN_PROC = 14,
+            KERN_PROC_PATHNAME = 12
+        }
+
+        int[4] mib = [CTL_KERN, KERN_PROC, KERN_PROC_PATHNAME, -1];
+        size_t len;
+
+        auto result = sysctl(mib.ptr, mib.length, null, &len, null, 0); // get the length of the path
+        errnoEnforce(result == 0);
+
+        auto buffer = new char[len - 1];
+        result = sysctl(mib.ptr, mib.length, buffer.ptr, &len, null, 0);
+        errnoEnforce(result == 0);
+
+        return buffer.assumeUnique;
+    }
+    else
+        static assert(0, "thisExePath is not supported on this platform");
+}
+
+unittest
+{
+    auto path = thisExePath();
+
+    assert(path.exists);
+    assert(path.isAbsolute);
+    assert(path.isFile);
+}
 
 version(StdDdoc)
 {
     /++
         Info on a file, similar to what you'd get from stat on a Posix system.
-
-        A $(D DirEntry) is obtained by using the functions $(D dirEntry) (to get
-        the $(D DirEntry) for a specific file) or $(D dirEntries) (to get a
-        $(D DirEntry) for each file/directory in a particular directory).
       +/
     struct DirEntry
     {
-        void _init(T...)(T);
-    public:
+        /++
+            Constructs a DirEntry for the given file (or directory).
+
+            Params:
+                path = The file (or directory) to get a DirEntry for.
+
+            Throws:
+                $(D FileException) if the file does not exist.
+        +/
+        this(string path);
+
+        version (Windows)
+        {
+            private this(string path, in WIN32_FIND_DATA* fd);
+            private this(string path, in WIN32_FIND_DATAW *fd);
+        }
+        else version (Posix)
+        {
+            private this(string path, core.sys.posix.dirent.dirent* fd);
+        }
 
         /++
             Returns the path to the file represented by this $(D DirEntry).
 
 Examples:
 --------------------
-auto de1 = dirEntry("/etc/fonts/fonts.conf");
+auto de1 = DirEntry("/etc/fonts/fonts.conf");
 assert(de1.name == "/etc/fonts/fonts.conf");
 
-auto de2 = dirEntry("/usr/share/include");
+auto de2 = DirEntry("/usr/share/include");
 assert(de2.name == "/usr/share/include");
 --------------------
           +/
@@ -1536,10 +1783,10 @@ assert(de2.name == "/usr/share/include");
 
 Examples:
 --------------------
-auto de1 = dirEntry("/etc/fonts/fonts.conf");
+auto de1 = DirEntry("/etc/fonts/fonts.conf");
 assert(!de1.isDir);
 
-auto de2 = dirEntry("/usr/share/include");
+auto de2 = DirEntry("/usr/share/include");
 assert(de2.isDir);
 --------------------
           +/
@@ -1562,10 +1809,10 @@ assert(de2.isDir);
 
 Examples:
 --------------------
-auto de1 = dirEntry("/etc/fonts/fonts.conf");
+auto de1 = DirEntry("/etc/fonts/fonts.conf");
 assert(de1.isFile);
 
-auto de2 = dirEntry("/usr/share/include");
+auto de2 = DirEntry("/usr/share/include");
 assert(!de2.isFile);
 --------------------
           +/
@@ -1640,7 +1887,7 @@ assert(!de2.isFile);
         @property uint linkAttributes();
 
         version(Windows)
-            alias void* stat_t;
+            alias stat_t = void*;
 
         /++
             $(BLUE This function is Posix-Only.)
@@ -1656,6 +1903,52 @@ else version(Windows)
     {
     public:
         alias name this;
+
+        this(string path)
+        {
+            if(!path.exists)
+                throw new FileException(path, "File does not exist");
+
+            _name = path;
+
+            with (getFileAttributesWin(path))
+            {
+                _size = makeUlong(nFileSizeLow, nFileSizeHigh);
+                _timeCreated = std.datetime.FILETIMEToSysTime(&ftCreationTime);
+                _timeLastAccessed = std.datetime.FILETIMEToSysTime(&ftLastAccessTime);
+                _timeLastModified = std.datetime.FILETIMEToSysTime(&ftLastWriteTime);
+                _attributes = dwFileAttributes;
+            }
+        }
+
+        private this(string path, in WIN32_FIND_DATA* fd)
+        {
+            auto clength = to!int(core.stdc.string.strlen(fd.cFileName.ptr));
+
+            // Convert cFileName[] to unicode
+            const wlength = MultiByteToWideChar(0, 0, fd.cFileName.ptr, clength, null, 0);
+            auto wbuf = new wchar[wlength];
+            const n = MultiByteToWideChar(0, 0, fd.cFileName.ptr, clength, wbuf.ptr, wlength);
+            assert(n == wlength);
+            // toUTF8() returns a new buffer
+            _name = buildPath(path, std.utf.toUTF8(wbuf[0 .. wlength]));
+            _size = (cast(ulong)fd.nFileSizeHigh << 32) | fd.nFileSizeLow;
+            _timeCreated = std.datetime.FILETIMEToSysTime(&fd.ftCreationTime);
+            _timeLastAccessed = std.datetime.FILETIMEToSysTime(&fd.ftLastAccessTime);
+            _timeLastModified = std.datetime.FILETIMEToSysTime(&fd.ftLastWriteTime);
+            _attributes = fd.dwFileAttributes;
+        }
+        private this(string path, in WIN32_FIND_DATAW *fd)
+        {
+            size_t clength = std.string.wcslen(fd.cFileName.ptr);
+            _name = std.utf.toUTF8(fd.cFileName[0 .. clength]);
+            _name = buildPath(path, std.utf.toUTF8(fd.cFileName[0 .. clength]));
+            _size = (cast(ulong)fd.nFileSizeHigh << 32) | fd.nFileSizeLow;
+            _timeCreated = std.datetime.FILETIMEToSysTime(&fd.ftCreationTime);
+            _timeLastAccessed = std.datetime.FILETIMEToSysTime(&fd.ftLastAccessTime);
+            _timeLastModified = std.datetime.FILETIMEToSysTime(&fd.ftLastWriteTime);
+            _attributes = fd.dwFileAttributes;
+        }
 
         @property string name() const pure nothrow
         {
@@ -1711,54 +2004,7 @@ else version(Windows)
         }
 
     private:
-
-        void _init(in char[] path)
-        {
-            _name = path.idup;
-
-            with (getFileAttributesWin(path))
-            {
-                _size = makeUlong(nFileSizeLow, nFileSizeHigh);
-                _timeCreated = std.datetime.FILETIMEToSysTime(&ftCreationTime);
-                _timeLastAccessed = std.datetime.FILETIMEToSysTime(&ftLastAccessTime);
-                _timeLastModified = std.datetime.FILETIMEToSysTime(&ftLastWriteTime);
-                _attributes = dwFileAttributes;
-            }
-        }
-
-        void _init(in char[] path, in WIN32_FIND_DATA* fd)
-        {
-            auto clength = to!int(std.c.string.strlen(fd.cFileName.ptr));
-
-            // Convert cFileName[] to unicode
-            const wlength = MultiByteToWideChar(0, 0, fd.cFileName.ptr, clength, null, 0);
-            auto wbuf = new wchar[wlength];
-            const n = MultiByteToWideChar(0, 0, fd.cFileName.ptr, clength, wbuf.ptr, wlength);
-            assert(n == wlength);
-            // toUTF8() returns a new buffer
-            _name = buildPath(path, std.utf.toUTF8(wbuf[0 .. wlength]));
-            _size = (cast(ulong)fd.nFileSizeHigh << 32) | fd.nFileSizeLow;
-            _timeCreated = std.datetime.FILETIMEToSysTime(&fd.ftCreationTime);
-            _timeLastAccessed = std.datetime.FILETIMEToSysTime(&fd.ftLastAccessTime);
-            _timeLastModified = std.datetime.FILETIMEToSysTime(&fd.ftLastWriteTime);
-            _attributes = fd.dwFileAttributes;
-        }
-
-        void _init(in char[] path, in WIN32_FIND_DATAW *fd)
-        {
-            size_t clength = std.string.wcslen(fd.cFileName.ptr);
-            _name = std.utf.toUTF8(fd.cFileName[0 .. clength]);
-            _name = buildPath(path, std.utf.toUTF8(fd.cFileName[0 .. clength]));
-            _size = (cast(ulong)fd.nFileSizeHigh << 32) | fd.nFileSizeLow;
-            _timeCreated = std.datetime.FILETIMEToSysTime(&fd.ftCreationTime);
-            _timeLastAccessed = std.datetime.FILETIMEToSysTime(&fd.ftLastAccessTime);
-            _timeLastModified = std.datetime.FILETIMEToSysTime(&fd.ftLastWriteTime);
-            _attributes = fd.dwFileAttributes;
-        }
-
-
         string _name; /// The file or directory represented by this DirEntry.
-
 
         SysTime _timeCreated;      /// The time when the file was created.
         SysTime _timeLastAccessed; /// The time when the file was last accessed.
@@ -1775,6 +2021,43 @@ else version(Posix)
     public:
         alias name this;
 
+        this(string path)
+        {
+            if(!path.exists)
+                throw new FileException(path, "File does not exist");
+
+            _name = path;
+
+            _didLStat = false;
+            _didStat = false;
+            _dTypeSet = false;
+        }
+
+        private this(string path, core.sys.posix.dirent.dirent* fd)
+        {
+            immutable len = core.stdc.string.strlen(fd.d_name.ptr);
+            _name = buildPath(path, fd.d_name[0 .. len]);
+
+            _didLStat = false;
+            _didStat = false;
+
+            //fd_d_type doesn't work for all file systems,
+            //in which case the result is DT_UNKOWN. But we
+            //can determine the correct type from lstat, so
+            //we'll only set the dtype here if we could
+            //correctly determine it (not lstat in the case
+            //of DT_UNKNOWN in case we don't ever actually
+            //need the dtype, thus potentially avoiding the
+            //cost of calling lstat).
+            if(fd.d_type != DT_UNKNOWN)
+            {
+                _dType = fd.d_type;
+                _dTypeSet = true;
+            }
+            else
+                _dTypeSet = false;
+        }
+
         @property string name() const pure nothrow
         {
             return _name;
@@ -1782,14 +2065,14 @@ else version(Posix)
 
         @property bool isDir()
         {
-            _ensureStatDone();
+            _ensureStatOrLStatDone();
 
             return (_statBuf.st_mode & S_IFMT) == S_IFDIR;
         }
 
         @property bool isFile()
         {
-            _ensureStatDone();
+            _ensureStatOrLStatDone();
 
             return (_statBuf.st_mode & S_IFMT) == S_IFREG;
         }
@@ -1850,41 +2133,6 @@ else version(Posix)
         }
 
     private:
-
-        void _init(in char[] path)
-        {
-            _name = path.idup;
-
-            _didLStat = false;
-            _didStat = false;
-            _dTypeSet = false;
-        }
-
-        void _init(in char[] path, core.sys.posix.dirent.dirent* fd)
-        {
-            immutable len = std.c.string.strlen(fd.d_name.ptr);
-            _name = buildPath(path, fd.d_name[0 .. len]);
-
-            _didLStat = false;
-            _didStat = false;
-
-            //fd_d_type doesn't work for all file systems,
-            //in which case the result is DT_UNKOWN. But we
-            //can determine the correct type from lstat, so
-            //we'll only set the dtype here if we could
-            //correctly determine it (not lstat in the case
-            //of DT_UNKNOWN in case we don't ever actually
-            //need the dtype, thus potentially avoiding the
-            //cost of calling lstat).
-            if(fd.d_type != DT_UNKNOWN)
-            {
-                _dType = fd.d_type;
-                _dTypeSet = true;
-            }
-            else
-                _dTypeSet = false;
-        }
-
         /++
             This is to support lazy evaluation, because doing stat's is
             expensive and not always needed.
@@ -1898,6 +2146,31 @@ else version(Posix)
                     "Failed to stat file `" ~ _name ~ "'");
 
             _didStat = true;
+        }
+
+        /++
+            This is to support lazy evaluation, because doing stat's is
+            expensive and not always needed.
+
+            Try both stat and lstat for isFile and isDir
+            to detect broken symlinks.
+         +/
+        void _ensureStatOrLStatDone()
+        {
+            if(_didStat)
+                return;
+
+            if( stat(toStringz(_name), &_statBuf) != 0 )
+            {
+                _ensureLStatDone();
+
+                _statBuf = stat_t.init;
+                _statBuf.st_mode = S_IFLNK;
+            }
+            else
+            {
+                _didStat = true;
+            }
         }
 
         /++
@@ -1920,7 +2193,6 @@ else version(Posix)
             _didLStat = true;
         }
 
-
         string _name; /// The file or directory represented by this DirEntry.
 
         stat_t _statBuf = void;  /// The result of stat().
@@ -1939,7 +2211,7 @@ unittest
     {
         if("C:\\Program Files\\".exists)
         {
-            auto de = dirEntry("C:\\Program Files\\");
+            auto de = DirEntry("C:\\Program Files\\");
             assert(!de.isFile);
             assert(de.isDir);
             assert(!de.isSymlink);
@@ -1947,13 +2219,13 @@ unittest
 
         if("C:\\Users\\".exists && "C:\\Documents and Settings\\".exists)
         {
-            auto de = dirEntry("C:\\Documents and Settings\\");
+            auto de = DirEntry("C:\\Documents and Settings\\");
             assert(de.isSymlink);
         }
 
         if("C:\\Windows\\system.ini".exists)
         {
-            auto de = dirEntry("C:\\Windows\\system.ini");
+            auto de = DirEntry("C:\\Windows\\system.ini");
             assert(de.isFile);
             assert(!de.isDir);
             assert(!de.isSymlink);
@@ -1964,7 +2236,7 @@ unittest
         if("/usr/include".exists)
         {
             {
-                auto de = dirEntry("/usr/include");
+                auto de = DirEntry("/usr/include");
                 assert(!de.isFile);
                 assert(de.isDir);
                 assert(!de.isSymlink);
@@ -1976,16 +2248,36 @@ unittest
             core.sys.posix.unistd.symlink("/usr/include", symfile.ptr);
 
             {
-                auto de = dirEntry(symfile);
+                auto de = DirEntry(symfile);
                 assert(!de.isFile);
                 assert(de.isDir);
                 assert(de.isSymlink);
+            }
+
+            symfile.remove();
+            core.sys.posix.unistd.symlink((deleteme ~ "_broken_symlink\0").ptr, symfile.ptr);
+
+            {
+                //Issue 8298
+                DirEntry de = DirEntry(symfile);
+
+                assert(!de.isFile);
+                assert(!de.isDir);
+                assert(de.isSymlink);
+                assertThrown(de.size);
+                assertThrown(de.timeStatusChanged);
+                assertThrown(de.timeLastAccessed);
+                assertThrown(de.timeLastModified);
+                assertThrown(de.attributes);
+                assertThrown(de.statBuf);
+                assert(symfile.exists);
+                symfile.remove();
             }
         }
 
         if("/usr/include/assert.h".exists)
         {
-            auto de = dirEntry("/usr/include/assert.h");
+            auto de = DirEntry("/usr/include/assert.h");
             assert(de.isFile);
             assert(!de.isDir);
             assert(!de.isSymlink);
@@ -1993,46 +2285,11 @@ unittest
     }
 }
 
-
-/******************************************************
- * $(RED Deprecated. It will be removed in November 2012.
- *       Please use $(LREF dirEntries) instead.)
- *
- * For each file and directory $(D DirEntry) in $(D pathname[])
- * pass it to the callback delegate.
- *
- * Params:
- *        callback =        Delegate that processes each
- *                        DirEntry in turn. Returns true to
- *                        continue, false to stop.
- * Example:
- *        This program lists all the files in its
- *        path argument and all subdirectories thereof.
- * ----
- * import std.stdio;
- * import std.file;
- *
- * void main(string[] args)
- * {
- *    bool callback(DirEntry* de)
- *    {
- *      if(de.isDir)
- *        listdir(de.name, &callback);
- *      else
- *        writefln(de.name);
-
- *      return true;
- *    }
- *
- *    listdir(args[1], &callback);
- * }
- * ----
- */
-deprecated alias listDir listdir;
-
-
 /***************************************************
 Copy file $(D from) to file $(D to). File timestamps are preserved.
+If the target file exists, it is overwritten.
+
+Throws: $(D FileException) on error.
  */
 void copy(in char[] from, in char[] to)
 {
@@ -2091,66 +2348,17 @@ void copy(in char[] from, in char[] to)
     }
 }
 
-
-/++
-    Set access/modified times of file $(D name).
-
-    Params:
-        fileAccessTime       = Time the file was last accessed.
-        fileModificationTime = Time the file was last modified.
-
-    Throws:
-        $(D FileException) on error.
- +/
-void setTimes(in char[] name,
-              SysTime fileAccessTime,
-              SysTime fileModificationTime)
-{
-    version(Windows)
-    {
-        const ta = SysTimeToFILETIME(fileAccessTime);
-        const tm = SysTimeToFILETIME(fileModificationTime);
-        alias TypeTuple!(GENERIC_WRITE,
-                         0,
-                         null,
-                         OPEN_EXISTING,
-                         FILE_ATTRIBUTE_NORMAL, HANDLE.init)
-              defaults;
-        auto h = CreateFileW(std.utf.toUTF16z(name), defaults);
-
-        cenforce(h != INVALID_HANDLE_VALUE, name);
-
-        scope(exit)
-            cenforce(CloseHandle(h), name);
-
-        cenforce(SetFileTime(h, null, &ta, &tm), name);
-    }
-    else version(Posix)
-    {
-        timeval[2] t = void;
-
-        t[0] = fileAccessTime.toTimeVal();
-        t[1] = fileModificationTime.toTimeVal();
-
-        enforce(utimes(toStringz(name), t) == 0);
-    }
-}
-
-/+
 unittest
 {
-    write(deleteme, "a\n");
-    scope(exit) { assert(exists(deleteme)); remove(deleteme); }
-    SysTime ftc1, fta1, ftm1;
-    getTimes(deleteme, ftc1, fta1, ftm1);
-    enforce(collectException(setTimes("nonexistent", fta1, ftm1)));
-    setTimes(deleteme, fta1 + dur!"seconds"(50), ftm1 + dur!"seconds"(50));
-    SysTime ftc2, fta2, ftm2;
-    getTimes(deleteme, ftc2, fta2, ftm2);
-    assert(fta1 + dur!"seconds(50) == fta2, text(fta1 + dur!"seconds(50), "!=", fta2));
-    assert(ftm1 + dur!"seconds(50) == ftm2);
+    auto t1 = deleteme, t2 = deleteme~"2";
+    scope(exit) foreach (t; [t1, t2]) if (t.exists) t.remove();
+    write(t1, "1");
+    copy(t1, t2);
+    assert(readText(t2) == "1");
+    write(t1, "2");
+    copy(t1, t2);
+    assert(readText(t2) == "2");
 }
-+/
 
 
 /++
@@ -2163,11 +2371,10 @@ unittest
  +/
 void rmdirRecurse(in char[] pathname)
 {
-    DirEntry de = dirEntry(pathname);
-
-    rmdirRecurse(de);
+    //No references to pathname will be kept after rmdirRecurse,
+    //so the cast is safe
+    rmdirRecurse(DirEntry(cast(string)pathname));
 }
-
 
 /++
     Remove directory and all of its content and subdirectories,
@@ -2180,10 +2387,15 @@ void rmdirRecurse(in char[] pathname)
 void rmdirRecurse(ref DirEntry de)
 {
     if(!de.isDir)
-        throw new FileException(text("File ", de.name, " is not a directory"));
+        throw new FileException(de.name, "Not a directory");
 
-    if(de.isSymlink)
-        remove(de.name);
+    if (de.isSymlink)
+    {
+        version (Windows)
+            rmdir(de.name);
+        else
+            remove(de.name);
+    }
     else
     {
         // all children, recursively depth-first
@@ -2195,6 +2407,16 @@ void rmdirRecurse(ref DirEntry de)
         // the dir itself
         rmdir(de.name);
     }
+}
+///ditto
+//Note, without this overload, passing an RValue DirEntry still works, but
+//actually fully reconstructs a DirEntry inside the
+//"rmdirRecurse(in char[] pathname)" implementation. That is needlessly
+//expensive.
+//A DirEntry is a bit big (72B), so keeping the "by ref" signature is desirable.
+void rmdirRecurse(DirEntry de)
+{
+    rmdirRecurse(de);
 }
 
 version(Windows) unittest
@@ -2245,35 +2467,6 @@ unittest
     remove("unittest_write2.tmp");
     assert(!exists("unittest_write2.tmp"));
 }
-
-//Remove this when _listDir is removed. It's not needed to test
-//DirEntry. Plenty of other tests to do that already.
-unittest
-{
-    _listDir(".", delegate bool (DirEntry * de)
-    {
-        version(Windows)
-        {
-            auto s = std.string.format("%s : c %s, w %s, a %s",
-                                       de.name,
-                                       de.timeCreated,
-                                       de.timeLastModified,
-                                       de.timeLastAccessed);
-        }
-        else version(Posix)
-        {
-            auto s = std.string.format("%s : c %s, w %s, a %s",
-                                       de.name,
-                                       de.timeStatusChanged,
-                                       de.timeLastModified,
-                                       de.timeLastAccessed);
-        }
-
-        return true;
-    }
-    );
-}
-
 
 /**
  * Dictates directory spanning policy for $(D_PARAM dirEntries) (see below).
@@ -2358,7 +2551,7 @@ private struct DirIteratorImpl
                     popDirStack();
                     return false;
                 }
-            _cur._init(_stack.data[$-1].dirpath, findinfo);
+            _cur = DirEntry(_stack.data[$-1].dirpath, findinfo);
             return true;
         }
 
@@ -2379,7 +2572,7 @@ private struct DirIteratorImpl
                     popDirStack();
                     return false;
                 }
-            _cur._init(_stack.data[$-1].dirpath, findinfo);
+            _cur = DirEntry(_stack.data[$-1].dirpath, findinfo);
             return true;
         }
 
@@ -2398,15 +2591,7 @@ private struct DirIteratorImpl
 
         bool mayStepIn()
         {
-            try
-            {
-                return _followSymlink ? _cur.isDir : _cur.isDir && !_cur.isSymlink;
-            }
-            catch (Exception)
-            {
-                // Entry may have disappeared
-            }
-            return false;
+            return _followSymlink ? _cur.isDir : _cur.isDir && !_cur.isSymlink;
         }
     }
     else version(Posix)
@@ -2434,7 +2619,7 @@ private struct DirIteratorImpl
                 if(core.stdc.string.strcmp(fdata.d_name.ptr, ".")  &&
                    core.stdc.string.strcmp(fdata.d_name.ptr, "..") )
                 {
-                    _cur._init(_stack.data[$-1].dirpath, fdata);
+                    _cur = DirEntry(_stack.data[$-1].dirpath, fdata);
                     return true;
                 }
             }
@@ -2589,7 +2774,6 @@ foreach(d; parallel(dFiles, 1)) //passes by 1 file to each thread
     std.process.system(cmd);
 }
 --------------------
-//
  +/
 auto dirEntries(string path, SpanMode mode, bool followSymlink = true)
 {
@@ -2610,8 +2794,8 @@ unittest
         auto len = enforce(walkLength(dirEntries(absolutePath(relpath), mode)));
         assert(walkLength(dirEntries(relpath, mode)) == len);
         assert(equal(
-                   map!(q{std.path.absolutePath(a.name)})(dirEntries(relpath, mode)),
-                   map!(q{a.name})(dirEntries(absolutePath(relpath), mode))));
+                   map!(a => std.path.absolutePath(a.name))(dirEntries(relpath, mode)),
+                   map!(a => a.name)(dirEntries(absolutePath(relpath), mode))));
         return len;
     }
 
@@ -2630,21 +2814,22 @@ unittest
         //writeln(name);
         assert(e.isFile || e.isDir, e.name);
     }
-}
 
-unittest
-{
     //issue 7264
-    foreach (string name; dirEntries(".", "*.d", SpanMode.breadth))
+    foreach (string name; dirEntries(testdir, "*.d", SpanMode.breadth))
     {
 
     }
-    foreach (entry; dirEntries(".", SpanMode.breadth))
+    foreach (entry; dirEntries(testdir, SpanMode.breadth))
     {
         static assert(is(typeof(entry) == DirEntry));
     }
     //issue 7138
-    auto a = array(dirEntries(".", SpanMode.shallow));
+    auto a = array(dirEntries(testdir, SpanMode.shallow));
+
+    // issue 11392
+    auto dFiles = dirEntries(testdir, SpanMode.shallow);
+    foreach(d; dFiles){}
 }
 
 /++
@@ -2654,13 +2839,16 @@ unittest
         path = The directory to iterate over.
         pattern  = String with wildcards, such as $(RED "*.d"). The supported
                    wildcard strings are described under
-                   $(XREF path, globMatch).
+                   $(XREF _path, globMatch).
         mode = Whether the directory's sub-directories should be iterated
                over depth-first ($(D_PARAM depth)), breadth-first
                ($(D_PARAM breadth)), or not at all ($(D_PARAM shallow)).
         followSymlink = Whether symbolic links which point to directories
                          should be treated as directories and their contents
                          iterated over.
+
+    Throws:
+        $(D FileException) if the directory does not exist.
 
 Examples:
 --------------------
@@ -2670,7 +2858,6 @@ auto dFiles = dirEntries(".","*.{d,di}",SpanMode.depth);
 foreach(d; dFiles)
     writeln(d.name);
 --------------------
-//
  +/
 auto dirEntries(string path, string pattern, SpanMode mode,
     bool followSymlink = true)
@@ -2680,6 +2867,9 @@ auto dirEntries(string path, string pattern, SpanMode mode,
 }
 
 /++
+    $(RED Deprecated. It will be removed in July 2014.
+         Please use $(LREF DirEntry) constructor directly instead.)
+
     Returns a DirEntry for the given file (or directory).
 
     Params:
@@ -2688,16 +2878,10 @@ auto dirEntries(string path, string pattern, SpanMode mode,
     Throws:
         $(D FileException) if the file does not exist.
  +/
+deprecated("Please use DirEntry constructor directly instead.")
 DirEntry dirEntry(in char[] name)
 {
-    if(!name.exists)
-        throw new FileException(text("File ", name, " does not exist"));
-
-    DirEntry dirEntry;
-
-    dirEntry._init(name);
-
-    return dirEntry;
+    return DirEntry(name.idup);
 }
 
 //Test dirEntry with a directory.
@@ -2937,7 +3121,7 @@ unittest
 Returns the path to a directory for temporary files.
 
 On Windows, this function returns the result of calling the Windows API function
-$(D $(LINK2 http://msdn.microsoft.com/en-us/library/windows/desktop/aa364992.aspx, GetTempPath)).
+$(LINK2 http://msdn.microsoft.com/en-us/library/windows/desktop/aa364992.aspx, $(D GetTempPath)).
 
 On POSIX platforms, it searches through the following list of directories
 and returns the first one which is found to exist:
@@ -2960,9 +3144,9 @@ environment variables and directory structures have changed in the
 meantime.
 
 The POSIX $(D tempDir) algorithm is inspired by Python's
-$(D $(LINK2 http://docs.python.org/library/tempfile.html#tempfile.tempdir, tempfile.tempdir)).
+$(LINK2 http://docs.python.org/library/tempfile.html#tempfile.tempdir, $(D tempfile.tempdir)).
 */
-string tempDir()
+string tempDir() @trusted
 {
     static string cache;
     if (cache is null)
@@ -2996,256 +3180,4 @@ string tempDir()
         if (cache is null) cache = ".";
     }
     return cache;
-}
-
-
-/++
-    $(RED Deprecated. It will be removed in November 2012.
-          Please use $(LREF dirEntries) instead.)
-
-    Returns the contents of the given directory.
-
-    The names in the contents do not include the pathname.
-
-    Throws:
-        $(D FileException) on error.
-
-Examples:
-    This program lists all the files and subdirectories in its
-    path argument.
---------------------
-import std.stdio;
-import std.file;
-
-void main(string[] args)
-{
-    auto dirs = std.file.listDir(args[1]);
-
-    foreach(d; dirs)
-        writefln(d);
-}
---------------------
- +/
-deprecated string[] listDir(C)(in C[] pathname)
-{
-    auto result = appender!(string[])();
-
-    bool listing(string filename)
-    {
-        result.put(filename);
-        return true; // continue
-    }
-
-    _listDir(pathname, &listing);
-
-    return result.data;
-}
-
-unittest
-{
-    assert(listDir(".").length > 0);
-}
-
-
-/++
-    $(RED Deprecated. It will be removed in November 2012.
-          Please use $(LREF dirEntries) instead.)
-
-    Returns all the files in the directory and its sub-directories
-    which match pattern or regular expression r.
-
-    Params:
-        pathname = The path of the directory to search.
-        pattern  = String with wildcards, such as $(RED "*.d"). The supported
-                   wildcard strings are described under fnmatch() in
-                   $(LINK2 std_path.html, std.path).
-        r        = Regular expression, for more powerful pattern matching.
-        followSymlink = Whether symbolic links which point to directories
-                         should be treated as directories and their contents
-                         iterated over. Ignored on Windows.
-
-Examples:
-    This program lists all the files with a "d" extension in
-    the path passed as the first argument.
---------------------
-import std.stdio;
-import std.file;
-
-void main(string[] args)
-{
-  auto d_source_files = std.file.listDir(args[1], "*.d");
-
-  foreach(d; d_source_files)
-      writefln(d);
-}
---------------------
-
-    A regular expression version that searches for all files with "d" or
-    "obj" extensions:
---------------------
-import std.stdio;
-import std.file;
-import std.regexp;
-
-void main(string[] args)
-{
-  auto d_source_files = std.file.listDir(args[1], RegExp(r"\.(d|obj)$"));
-
-  foreach(d; d_source_files)
-      writefln(d);
-}
---------------------
- +/
-deprecated string[] listDir(C, U)(in C[] pathname, U filter, bool followSymlink = true)
-    if(is(C : char) && !is(U: bool delegate(string filename)))
-{
-    import std.regexp;
-    auto result = appender!(string[])();
-    bool callback(DirEntry* de)
-    {
-        if(followSymlink ? de.isDir : attrIsDir(de.linkAttributes))
-        {
-            _listDir(de.name, &callback);
-        }
-        else
-        {
-            static if(is(U : const(C[])))
-            {//pattern version
-                if(std.path.fnmatch(de.name, filter))
-                    result.put(de.name);
-            }
-            else static if(is(U : RegExp))
-            {//RegExp version
-
-                if(filter.test(de.name))
-                    result.put(de.name);
-            }
-            else
-                static assert(0,"There is no version of listDir that takes " ~ U.stringof);
-        }
-        return true; // continue
-    }
-
-    _listDir(pathname, &callback);
-
-    return result.data;
-}
-
-/******************************************************
- * $(RED Deprecated. It will be removed in November 2012.
- *       Please use $(LREF dirEntries) instead.)
- *
- * For each file and directory name in pathname[],
- * pass it to the callback delegate.
- *
- * Params:
- *        callback =        Delegate that processes each
- *                        filename in turn. Returns true to
- *                        continue, false to stop.
- * Example:
- *        This program lists all the files in its
- *        path argument, including the path.
- * ----
- * import std.stdio;
- * import std.path;
- * import std.file;
- *
- * void main(string[] args)
- * {
- *    auto pathname = args[1];
- *    string[] result;
- *
- *    bool listing(string filename)
- *    {
- *      result ~= buildPath(pathname, filename);
- *      return true; // continue
- *    }
- *
- *    listdir(pathname, &listing);
- *
- *    foreach (name; result)
- *      writefln("%s", name);
- * }
- * ----
- */
-deprecated void listDir(C, U)(in C[] pathname, U callback)
-    if(is(C : char) && is(U: bool delegate(string filename)))
-{
-    _listDir(pathname, callback);
-}
-
-
-//==============================================================================
-// Private Section.
-//==============================================================================
-private:
-
-
-deprecated void _listDir(in char[] pathname, bool delegate(string filename) callback)
-{
-    bool listing(DirEntry* de)
-    {
-        return callback(baseName(de.name));
-    }
-
-    _listDir(pathname, &listing);
-}
-
-
-version(Windows)
-{
-    deprecated void _listDir(in char[] pathname, bool delegate(DirEntry* de) callback)
-    {
-        DirEntry de;
-        auto c = buildPath(pathname, "*.*");
-
-        WIN32_FIND_DATAW fileinfo;
-
-        auto h = FindFirstFileW(std.utf.toUTF16z(c), &fileinfo);
-        if(h == INVALID_HANDLE_VALUE)
-            return;
-
-        scope(exit) FindClose(h);
-
-        do
-        {
-            // Skip "." and ".."
-            if(std.string.wcscmp(fileinfo.cFileName.ptr, ".") == 0 ||
-               std.string.wcscmp(fileinfo.cFileName.ptr, "..") == 0)
-            {
-                continue;
-            }
-
-            de._init(pathname, &fileinfo);
-
-            if(!callback(&de))
-                break;
-
-        } while(FindNextFileW(h, &fileinfo) != FALSE);
-    }
-}
-else version(Posix)
-{
-    deprecated void _listDir(in char[] pathname, bool delegate(DirEntry* de) callback)
-    {
-        auto h = cenforce(opendir(toStringz(pathname)), pathname);
-        scope(exit) closedir(h);
-
-        DirEntry de;
-
-        for(dirent* fdata; (fdata = readdir(h)) != null; )
-        {
-            // Skip "." and ".."
-            if(!core.stdc.string.strcmp(fdata.d_name.ptr, ".") ||
-               !core.stdc.string.strcmp(fdata.d_name.ptr, ".."))
-            {
-                continue;
-            }
-
-            de._init(pathname, fdata);
-
-            if(!callback(&de))
-                break;
-        }
-    }
 }

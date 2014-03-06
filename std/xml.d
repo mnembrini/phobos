@@ -377,7 +377,7 @@ S encode(S)(S s)
         lastI = i + 1;
     }
 
-    if (!result.data) return s;
+    if (!result.data.ptr) return s;
     result.put(s[lastI .. $]);
     return result.data;
 }
@@ -441,6 +441,8 @@ enum DecodeMode
  */
 string decode(string s, DecodeMode mode=DecodeMode.LOOSE)
 {
+    import std.utf : encode;
+
     if (mode == DecodeMode.NONE) return s;
 
     char[] buffer;
@@ -691,7 +693,7 @@ class Element : Item
      * Constructs an Element from a Tag.
      *
      * Params:
-     *      tag = the start or empty tag of the element.
+     *      tag_ = the start or empty tag of the element.
      */
     this(const(Tag) tag_)
     {
@@ -881,7 +883,7 @@ class Element : Item
         /**
          * Returns the decoded interior of an element.
          *
-         * The element is assumed to containt text <i>only</i>. So, for
+         * The element is assumed to contain text <i>only</i>. So, for
          * example, given XML such as "&lt;title&gt;Good &amp;amp;
          * Bad&lt;/title&gt;", will return "Good &amp; Bad".
          *
@@ -967,7 +969,7 @@ class Element : Item
  * $(DDOC_ENUM_MEMBERS EMPTY) Used for empty tags
  *
  */
-enum TagType { START, END, EMPTY };
+enum TagType { START, END, EMPTY }
 
 /**
  * Class representing an XML tag.
@@ -1115,9 +1117,10 @@ class Tag
         override int opCmp(Object o)
         {
             const tag = toType!(const Tag)(o);
+            // Note that attr is an AA, so the comparison is nonsensical (bug 10381)
             return
                 ((name != tag.name) ? ( name < tag.name ? -1 : 1 ) :
-                ((attr != tag.attr) ? ( attr < tag.attr ? -1 : 1 ) :
+                ((attr != tag.attr) ? ( cast(void *)attr < cast(void*)tag.attr ? -1 : 1 ) :
                 ((type != tag.type) ? ( type < tag.type ? -1 : 1 ) :
             0 )));
         }
@@ -1154,7 +1157,7 @@ class Tag
             {
                 string s = "<" ~ name;
                 foreach(key,val;attr)
-                    s ~= format(" %s=\"%s\"",key,decode(val,DecodeMode.LOOSE));
+                    s ~= format(" %s=\"%s\"",key,encode(val));
                 return s;
             }
 
@@ -1286,7 +1289,7 @@ class CData : Item
     private string content;
 
     /**
-     * Construct a chraracter data section
+     * Construct a character data section
      *
      * Params:
      *      content = the body of the character data segment
@@ -1653,7 +1656,7 @@ class DocumentParser : ElementParser
      * This is enforced by the function's in contract.
      *
      * Params:
-     *      xmltext = the entire XML document as text
+     *      xmlText_ = the entire XML document as text
      *
      */
     this(string xmlText_)
@@ -1693,9 +1696,9 @@ class DocumentParser : ElementParser
  */
 class ElementParser
 {
-    alias void delegate(string) Handler;
-    alias void delegate(in Element element) ElementHandler;
-    alias void delegate(ElementParser parser) ParserHandler;
+    alias Handler = void delegate(string);
+    alias ElementHandler = void delegate(in Element element);
+    alias ParserHandler = void delegate(ElementParser parser);
 
     private
     {
@@ -1828,7 +1831,7 @@ class ElementParser
     /**
      * Register an alternative handler which will be called whenever text
      * is encountered. This differs from onText in that onText will decode
-     * the text, wheras onTextRaw will not. This allows you to make design
+     * the text, whereas onTextRaw will not. This allows you to make design
      * choices, since onText will be more accurate, but slower, while
      * onTextRaw will be faster, but less accurate. Of course, you can
      * still call decode() within your handler, if you want, but you'd
@@ -1853,7 +1856,7 @@ class ElementParser
 
     /**
      * Register a handler which will be called whenever a character data
-     * segement is encountered.
+     * segment is encountered.
      *
      * Examples:
      * --------------
@@ -1921,7 +1924,7 @@ class ElementParser
      * Examples:
      * --------------
      * // Call this function whenever an XML instruction is encountered
-     * // (Note: XML instructions may only occur preceeding the root tag of a
+     * // (Note: XML instructions may only occur preceding the root tag of a
      * // document).
      * onPI = (string s)
      * {
@@ -2347,7 +2350,7 @@ private
         int n = 0;
              if (s.startsWith("'yes'") || s.startsWith("\"yes\"")) n = 5;
         else if (s.startsWith("'no'" ) || s.startsWith("\"no\"" )) n = 4;
-        else fail("standalone attribute value must be 'yes', \"yes\","
+        else fail("standalone attribute value must be 'yes', \"yes\","~
             " 'no' or \"no\"");
         s = s[n..$];
     }
@@ -2621,7 +2624,7 @@ private
  *
  * Throws: CheckException if the document is not well formed
  *
- * CheckException's toString() method will yield the complete heirarchy of
+ * CheckException's toString() method will yield the complete hierarchy of
  * parse failure (the XML equivalent of a stack trace), giving the line and
  * column number of every failure at every level.
  */
@@ -2683,7 +2686,7 @@ unittest
     }
     catch(CheckException e)
     {
-        int n = e.toString().indexOf("end tag name \"genres\" differs"
+        int n = e.toString().indexOf("end tag name \"genres\" differs"~
             " from start tag name \"genre\"");
         assert(n != -1);
     }
@@ -2729,6 +2732,13 @@ EOS";
     xml.parse();
 }
 
+unittest
+{
+    string s = `<tag attr="&quot;value&gt;" />`;
+    auto doc = new Document(s);
+    assert(doc.toString() == s);
+}
+
 /** The base class for exceptions thrown by this module */
 class XMLException : Exception { this(string msg) { super(msg); } }
 
@@ -2771,7 +2781,7 @@ class TagException : XMLException
  */
 class CheckException : XMLException
 {
-    CheckException err; /// Parent in heirarchy
+    CheckException err; /// Parent in hierarchy
     private string tail;
     /**
      * Name of production rule which failed to parse,
@@ -2811,7 +2821,7 @@ class CheckException : XMLException
     }
 }
 
-private alias CheckException Err;
+private alias Err = CheckException;
 
 // Private helper functions
 

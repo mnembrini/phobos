@@ -71,7 +71,7 @@ import core.exception : onOutOfMemoryError;
 extern (C) Object _d_toObject(void* p);
 
 // Used in place of Object.notifyRegister and Object.notifyUnRegister.
-alias void delegate(Object) DisposeEvt;
+alias DisposeEvt = void delegate(Object);
 extern (C) void  rt_attachDisposeEvent( Object obj, DisposeEvt evt );
 extern (C) void  rt_detachDisposeEvent( Object obj, DisposeEvt evt );
 //debug=signal;
@@ -151,7 +151,7 @@ mixin template Signal(T1...)
      * Delegates to struct instances or nested functions must not be
      * used as slots.
      */
-    alias void delegate(T1) slot_t;
+    alias slot_t = void delegate(T1);
 
     /***
      * Call each of the connected slots, passing the argument(s) i to them.
@@ -440,7 +440,7 @@ unittest {
         a.value2 = 42;
         a.value3 = 43;
     }
-    
+
     test(new Bar);
 
     class BarDerived: Bar
@@ -453,12 +453,12 @@ unittest {
         mixin Signal!(string, int)  s5;
         mixin Signal!(string, long) s6;
     }
-    
+
     auto a = new BarDerived;
-    
+
     test!Bar(a);
     test!BarDerived(a);
-    
+
     auto o4 = new Observer;
     auto o5 = new Observer;
     auto o6 = new Observer;

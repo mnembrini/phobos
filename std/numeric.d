@@ -108,6 +108,29 @@ private int bsr64(ulong value) {
     return v.high==0 ? core.bitop.bsr(v.low) : core.bitop.bsr(v.high) + 32;
 }
 
+private template CustomFloatParams(uint bits)
+{
+    enum CustomFloatFlags flags = CustomFloatFlags.ieee
+                ^ ((bits == 80) ? CustomFloatFlags.storeNormalized : CustomFloatFlags.none);
+    static if (bits ==  8) alias CustomFloatParams = CustomFloatParams!( 4,  3, flags);
+    static if (bits == 16) alias CustomFloatParams = CustomFloatParams!(10,  5, flags);
+    static if (bits == 32) alias CustomFloatParams = CustomFloatParams!(23,  8, flags);
+    static if (bits == 64) alias CustomFloatParams = CustomFloatParams!(52, 11, flags);
+    static if (bits == 80) alias CustomFloatParams = CustomFloatParams!(64, 15, flags);
+}
+
+private template CustomFloatParams(uint precision, uint exponentWidth, CustomFloatFlags flags)
+{
+    alias CustomFloatParams =
+        TypeTuple!(
+            precision,
+            exponentWidth,
+            flags,
+            (1 << (exponentWidth - ((flags & flags.probability) == 0)))
+             - ((flags & (flags.nan | flags.infinity)) != 0) - ((flags & flags.probability) != 0)
+        ); // ((flags & CustomFloatFlags.probability) == 0)
+}
+
 /**
  * Allows user code to define custom floating-point formats. These formats are
  * for storage only; all operations on them are performed by first implicitly
@@ -127,35 +150,28 @@ private int bsr64(ulong value) {
  * writeln(w);
  *
  * // Functions calls require conversion
- * z = sin(+x)           + cos(+y);                     // Use uniary plus to concisely convert to a real
+ * z = sin(+x)           + cos(+y);                     // Use unary plus to concisely convert to a real
  * z = sin(x.re)         + cos(y.re);                   // Or use the .re property to convert to a real
  * z = sin(x.get!float)  + cos(y.get!float);            // Or use get!T
  * z = sin(cast(float)x) + cos(cast(float)y);           // Or use cast(T) to explicitly convert
  *
  * // Define a 8-bit custom float for storing probabilities
- * alias CustomFloat!(4, 4, CustomFloatFlags.ieee^CustomFloatFlags.probability^CustomFloatFlags.signed ) Probability;
+ * alias Probability = CustomFloat!(4, 4, CustomFloatFlags.ieee^CustomFloatFlags.probability^CustomFloatFlags.signed );
  * auto p = Probability(0.5);
  * ----
  */
 template CustomFloat(uint bits)
-if( bits == 8 || bits == 16 || bits == 32 || bits == 64 || bits == 80) {
-    static if(bits ==  8) alias CustomFloat!( 4, 3) CustomFloat;
-    static if(bits == 16) alias CustomFloat!(10, 5) CustomFloat;
-    static if(bits == 32) alias CustomFloat!(23, 8) CustomFloat;
-    static if(bits == 64) alias CustomFloat!(52,11) CustomFloat;
-    static if(bits == 80) alias CustomFloat!(64, 15,
-        CustomFloatFlags.ieee^CustomFloatFlags.storeNormalized) CustomFloat;
-}
-///ditto
-template CustomFloat(uint precision, uint exponentWidth,CustomFloatFlags flags = CustomFloatFlags.ieee)
-if(  ( (flags & flags.signed) + precision + exponentWidth) % 8 == 0 && precision + exponentWidth > 0)
+if (bits == 8 || bits == 16 || bits == 32 || bits == 64 || bits == 80)
 {
-    alias CustomFloat!(precision,exponentWidth,flags,
-                       (1 << (exponentWidth  - ((flags&flags.probability)==0) ))
-                       - ((flags&(flags.nan|flags.infinity))!=0) - ((flags&flags.probability)!=0)
-                       ) CustomFloat; // ((flags&CustomFloatFlags.probability)==0)
+    alias CustomFloat = CustomFloat!(CustomFloatParams!(bits));
 }
-///ditto
+/// ditto
+template CustomFloat(uint precision, uint exponentWidth, CustomFloatFlags flags = CustomFloatFlags.ieee)
+if (((flags & flags.signed) + precision + exponentWidth) % 8 == 0 && precision + exponentWidth > 0)
+{
+    alias CustomFloat = CustomFloat!(CustomFloatParams!(precision, exponentWidth, flags));
+}
+/// ditto
 struct CustomFloat(
     uint                precision,  // fraction bits (23 for float)
     uint                exponentWidth,  // exponent bits (8 for float)  Exponent width
@@ -167,29 +183,31 @@ struct CustomFloat(
     private:
         // get the correct unsigned bitfield type to support > 32 bits
         template uType(uint bits) {
-            static if(bits <= size_t.sizeof*8)  alias size_t uType;
-            else                                alias ulong  uType;
+            static if(bits <= size_t.sizeof*8)  alias uType = size_t;
+            else                                alias uType = ulong ;
         }
 
         // get the correct signed   bitfield type to support > 32 bits
         template sType(uint bits) {
-            static if(bits <= ptrdiff_t.sizeof*8-1) alias ptrdiff_t sType;
-            else                                    alias long      sType;
+            static if(bits <= ptrdiff_t.sizeof*8-1) alias sType = ptrdiff_t;
+            else                                    alias sType = long;
         }
 
-        alias uType!precision     T_sig;
-        alias uType!exponentWidth T_exp;
-        alias sType!exponentWidth T_signed_exp;
+        alias T_sig = uType!precision;
+        alias T_exp = uType!exponentWidth;
+        alias T_signed_exp = sType!exponentWidth;
 
-        alias CustomFloatFlags Flags;
+        alias Flags = CustomFloatFlags;
 
         // Facilitate converting numeric types to custom float
-        union ToBinary(F) if(is(CustomFloat!(F.sizeof*8)) || is(F == real)) {
+        union ToBinary(F)
+        if (is(typeof(CustomFloatParams!(F.sizeof*8))) || is(F == real))
+        {
             F set;
 
             // If on Linux or Mac, where 80-bit reals are padded, ignore the
             // padding.
-            CustomFloat!(min(F.sizeof*8, 80)) get;
+            CustomFloat!(CustomFloatParams!(min(F.sizeof*8, 80))) get;
 
             // Convert F to the correct binary type.
             static typeof(get) opCall(F value) {
@@ -539,13 +557,13 @@ struct CustomFloat(
 
 unittest
 {
-    alias TypeTuple!(
-        CustomFloat!(5, 10),
-        CustomFloat!(5, 11, CustomFloatFlags.ieee ^ CustomFloatFlags.signed),
-        CustomFloat!(1, 15, CustomFloatFlags.ieee ^ CustomFloatFlags.signed),
-        CustomFloat!(4, 3, CustomFloatFlags.ieee | CustomFloatFlags.probability ^ CustomFloatFlags.signed)
-
-        ) FPTypes;
+    alias FPTypes =
+        TypeTuple!(
+            CustomFloat!(5, 10),
+            CustomFloat!(5, 11, CustomFloatFlags.ieee ^ CustomFloatFlags.signed),
+            CustomFloat!(1, 15, CustomFloatFlags.ieee ^ CustomFloatFlags.signed),
+            CustomFloat!(4, 3, CustomFloatFlags.ieee | CustomFloatFlags.probability ^ CustomFloatFlags.signed)
+        );
 
     foreach (F; FPTypes)
     {
@@ -610,7 +628,7 @@ on very many factors.
  */
 template FPTemporary(F) if (isFloatingPoint!F)
 {
-    alias real FPTemporary;
+    alias FPTemporary = real;
 }
 
 /**
@@ -697,7 +715,7 @@ T findRoot(T, R)(scope R delegate(T) f, T a, T b)
 {
     auto r = findRoot(f, a, b, f(a), f(b), (T lo, T hi){ return false; });
     // Return the first value if it is smaller or NaN
-    return fabs(r[2]) !> fabs(r[3]) ? r[0] : r[1];
+    return !(fabs(r[2]) > fabs(r[3])) ? r[0] : r[1];
 }
 
 /** Find root of a real function f(x) by bracketing, allowing the
@@ -736,7 +754,7 @@ T findRoot(T, R)(scope R delegate(T) f, T a, T b)
 Tuple!(T, T, R, R) findRoot(T,R)(scope R delegate(T) f, T ax, T bx, R fax, R fbx,
     scope bool delegate(T lo, T hi) tolerance)
 in {
-    assert(ax<>=0 && bx<>=0, "Limits must not be NaN");
+    assert(!ax.isNaN && !bx.isNaN, "Limits must not be NaN");
     assert(signbit(fax) != signbit(fbx), "Parameters must bracket the root.");
 }
 body {
@@ -760,7 +778,7 @@ body {
     void bracket(T c)
     {
         T fc = f(c);
-        if (fc !<> 0) { // Exact solution, or NaN
+        if (fc == 0 || fc.isNaN) { // Exact solution, or NaN
             a = c;
             fa = fc;
             d = c;
@@ -830,11 +848,11 @@ body {
     }
 
     // On the first iteration we take a secant step:
-    if (fa !<> 0) {
+    if (fa == 0 || fa.isNaN) {
         done = true;
         b = a;
         fb = fa;
-    } else if (fb !<> 0) {
+    } else if (fb == 0 || fb.isNaN) {
         done = true;
         a = b;
         fa = fb;
@@ -874,7 +892,7 @@ whileloop:
                 real d32 = (d31 - q21) * fd / (fd - fa);
                 real q33 = (d32 - q22) * fa / (fe - fa);
                 c = a + (q31 + q32 + q33);
-                if (c!<>=0 || (c <= a) || (c >= b)) {
+                if (c.isNaN || (c <= a) || (c >= b)) {
                     // DAC: If the interpolation predicts a or b, it's
                     // probable that it's the actual root. Only allow this if
                     // we're already close to the root.
@@ -892,7 +910,7 @@ whileloop:
                 // DAC: Alefeld doesn't explain why the number of newton steps
                 // should vary.
                 c = newtonQuadratic(distinct ? 3 : 2);
-                if(c!<>=0 || (c <= a) || (c >= b)) {
+                if(c.isNaN || (c <= a) || (c >= b)) {
                     // Failure, try a secant step:
                     c = secant_interpolate(a, b, fa, fb);
                 }
@@ -919,7 +937,7 @@ whileloop:
         c = u - 2 * (fu / (fb - fa)) * (b - a);
         // DAC: If the secant predicts a value equal to an endpoint, it's
         // probably false.
-        if(c==a || c==b || c!<>=0 || fabs(c - u) > (b - a) / 2) {
+        if(c==a || c==b || c.isNaN || fabs(c - u) > (b - a) / 2) {
             if ((a-b) == a || (b-a) == b) {
                 if ( (a>0 && b<0) || (a<0 && b>0) ) c = 0;
                 else {
@@ -982,7 +1000,7 @@ unittest
     void testFindRoot(real delegate(real) f, real x1, real x2) {
         numCalls=0;
         ++numProblems;
-        assert(x1<>=0 && x2<>=0);
+        assert(!x1.isNaN && !x2.isNaN);
         assert(signbit(x1) != signbit(x2));
         auto result = findRoot(f, x1, x2, f(x1), f(x2),
           (real lo, real hi) { return false; });
@@ -1301,11 +1319,7 @@ unittest
         [1.0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
     static const y =
         [2.0, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19];
-    assert(dotProduct(x, y) == 2280);
-
-    // Test in CTFE
-    enum ctfeDot = dotProduct(x, y);
-    static assert(ctfeDot == 2280);
+    assertCTFEable!({ assert(dotProduct(x, y) == 2280); });
 }
 
 /**
@@ -1577,9 +1591,9 @@ unittest
 // {
 //     ReturnType!(fun) tabulateFixed(ParameterTypeTuple!(fun) arg)
 //     {
-//         alias ParameterTypeTuple!(fun)[0] num;
+//         alias num = ParameterTypeTuple!(fun)[0];
 //         static num[n] table;
-//         alias arg[0] x;
+//         alias x = arg[0];
 //         enforce(left <= x && x < right);
 //         immutable i = cast(uint) (table.length
 //                 * ((x - left) / (right - left)));
@@ -1605,7 +1619,7 @@ unittest
 // unittest
 // {
 //     enum epsilon = 0.01;
-//     alias tabulateFixed!(tanh, 700, epsilon, 0.2, 3) fasttanh;
+//     alias fasttanh = tabulateFixed!(tanh, 700, epsilon, 0.2, 3);
 //     uint testSize = 100000;
 //     auto rnd = Random(unpredictableSeed);
 //     foreach (i; 0 .. testSize) {
@@ -2055,7 +2069,7 @@ unittest
             ["nyuk", "I", "have", "no", "chocolate", "giba"],
             ["wyda", "I", "have", "I", "have", "have", "I", "have", "hehe"],
             0.5);
-    double witness[] = [ 7.0, 4.03125, 0, 0 ];
+    double[] witness = [ 7.0, 4.03125, 0, 0 ];
     foreach (e; sim)
     {
         //writeln(e);
@@ -2163,7 +2177,7 @@ unittest
 // though floats seem accurate enough for all practical purposes, since
 // they pass the "approxEqual(inverseFft(fft(arr)), arr)" test even for
 // size 2 ^^ 22.
-private alias float lookup_t;
+private alias lookup_t = float;
 
 /**A class for performing fast Fourier transforms of power of two sizes.
  * This class encapsulates a large amount of state that is reusable when
@@ -2204,10 +2218,10 @@ private:
             recurseRange.popHalf();
             slowFourier2(recurseRange, buf[$ / 2..$]);
         }
-        
+
         butterfly(buf);
     }
-    
+
     // This algorithm works by performing the even and odd parts of our FFT
     // using the "two for the price of one" method mentioned at
     // http://www.engineeringproductivitytools.com/stuff/T0001/PT10.HTM#Head521
@@ -2218,8 +2232,8 @@ private:
         assert(range.length >= 4);
         assert(isPowerOfTwo(range.length));
     } body {
-        alias ElementType!R E;
-        
+        alias E = ElementType!R;
+
         // Converts odd indices of range to the imaginary components of
         // a range half the size.  The even indices become the real components.
         static if(isArray!R && isFloatingPoint!E) {
@@ -2227,57 +2241,57 @@ private:
             // cheap way to convert.  This is a common case, so take advantage.
             auto oddsImag = cast(Complex!E[]) range;
         } else {
-            // General case:  Use a higher order range.  We can assume 
+            // General case:  Use a higher order range.  We can assume
             // source.length is even because it has to be a power of 2.
             static struct OddToImaginary {
                 R source;
-                alias Complex!(CommonType!(E, typeof(buf[0].re))) C;
-                
+                alias C = Complex!(CommonType!(E, typeof(buf[0].re)));
+
                 @property {
                     C front() {
                         return C(source[0], source[1]);
                     }
-                
+
                     C back() {
                         immutable n = source.length;
                         return C(source[n - 2], source[n - 1]);
                     }
-                    
+
                     typeof(this) save() {
                         return typeof(this)(source.save);
                     }
-                    
+
                     bool empty() {
                         return source.empty;
                     }
-                    
+
                     size_t length() {
                         return source.length / 2;
                     }
                 }
-                
+
                 void popFront() {
                     source.popFront();
                     source.popFront();
                 }
-                
+
                 void popBack() {
                     source.popBack();
                     source.popBack();
                 }
-                
+
                 C opIndex(size_t index) {
                     return C(source[index * 2], source[index * 2 + 1]);
                 }
-                
+
                 typeof(this) opSlice(size_t lower, size_t upper) {
                     return typeof(this)(source[lower * 2..upper * 2]);
                 }
             }
-            
+
             auto oddsImag = OddToImaginary(range);
         }
-        
+
         fft(oddsImag, buf[0..$ / 2]);
         auto evenFft = buf[0..$ / 2];
         auto oddFft = buf[$ / 2..$];
@@ -2286,7 +2300,7 @@ private:
         oddFft[0].im = 0;
         evenFft[0].im = 0;
         // evenFft[0].re is already right b/c it's aliased with buf[0].re.
-        
+
         foreach(k; 1..halfN / 2 + 1) {
             immutable bufk = buf[k];
             immutable bufnk = buf[buf.length / 2 - k];
@@ -2294,7 +2308,7 @@ private:
             evenFft[halfN - k].re = evenFft[k].re;
             evenFft[k].im = 0.5 * (bufk.im - bufnk.im);
             evenFft[halfN - k].im = -evenFft[k].im;
-            
+
             oddFft[k].re = 0.5 * (bufk.im + bufnk.im);
             oddFft[halfN - k].re = oddFft[k].re;
             oddFft[k].im = 0.5 * (bufnk.re - bufk.re);
@@ -2303,8 +2317,8 @@ private:
 
         butterfly(buf);
     }
-    
-    void butterfly(R)(R buf) const 
+
+    void butterfly(R)(R buf) const
     in {
         assert(isPowerOfTwo(buf.length));
     } body {
@@ -2326,9 +2340,9 @@ private:
 
         immutable halfLen = n / 2;
 
-        // This loop is unrolled and the two iterations are nterleaved relative
-        // to the textbook FFT to increase ILP.  This gives roughly 5% speedups
-        // on DMD.
+        // This loop is unrolled and the two iterations are interleaved
+        // relative to the textbook FFT to increase ILP.  This gives roughly 5%
+        // speedups on DMD.
         for(size_t k = 0; k < halfLen; k += 2) {
             immutable cosTwiddle1 = cosFromLookup(k);
             immutable sinTwiddle1 = negSinFromLookup(k);
@@ -2427,8 +2441,8 @@ private:
     }
 
 public:
-    /**Create an $(D Fft) object for computing fast Fourier transforms of 
-     * power of two sizes of $(D size) or smaller.  $(D size) must be a 
+    /**Create an $(D Fft) object for computing fast Fourier transforms of
+     * power of two sizes of $(D size) or smaller.  $(D size) must be a
      * power of two.
      */
     this(size_t size) {
@@ -2451,9 +2465,12 @@ public:
      *
      * Note:  Pure real FFTs are automatically detected and the relevant
      *        optimizations are performed.
-     * 
+     *
      * Returns:  An array of complex numbers representing the transformed data in
      *           the frequency domain.
+     *
+     * Conventions: The exponent is negative and the factor is one,
+     *              i.e., output[j] := sum[ exp(-2 PI i j k / N) input[k] ].
      */
     Complex!F[] fft(F = double, R)(R range) const
     if(isFloatingPoint!F && isRandomAccessRange!R) {
@@ -2490,10 +2507,10 @@ public:
             slowFourier2(range, buf);
             return;
         } else {
-            alias ElementType!R E;
+            alias E = ElementType!R;
             static if(is(E : real)) {
                 return fftImplPureReal(range, buf);
-            } else {                
+            } else {
                 static if(is(R : Stride!R)) {
                     return fftImpl(range, buf);
                 } else {
@@ -2510,6 +2527,9 @@ public:
      * the same compile-time interface.
      *
      * Returns:  The time-domain signal.
+     *
+     * Conventions: The exponent is positive and the factor is 1/N, i.e.,
+     *              output[j] := (1 / N) sum[ exp(+2 PI i j k / N) input[k] ].
      */
     Complex!F[] inverseFft(F = double, R)(R range) const
     if(isRandomAccessRange!R && isComplexLike!(ElementType!R) && isFloatingPoint!F) {
@@ -2598,18 +2618,18 @@ unittest {
         [36.0, -4, -4, -4, -4, -4, -4, -4]));
     assert(approxEqual(map!"a.im"(fft1),
         [0, 9.6568, 4, 1.6568, 0, -1.6568, -4, -9.6568]));
-    
+
     auto fft1Retro = fft(retro(arr));
     assert(approxEqual(map!"a.re"(fft1Retro),
         [36.0, 4, 4, 4, 4, 4, 4, 4]));
     assert(approxEqual(map!"a.im"(fft1Retro),
-        [0, -9.6568, -4, -1.6568, 0, 1.6568, 4, 9.6568]));  
-        
+        [0, -9.6568, -4, -1.6568, 0, 1.6568, 4, 9.6568]));
+
     auto fft1Float = fft(to!(float[])(arr));
     assert(approxEqual(map!"a.re"(fft1), map!"a.re"(fft1Float)));
     assert(approxEqual(map!"a.im"(fft1), map!"a.im"(fft1Float)));
 
-    alias Complex!float C;
+    alias C = Complex!float;
     auto arr2 = [C(1,2), C(3,4), C(5,6), C(7,8), C(9,10),
         C(11,12), C(13,14), C(15,16)];
     auto fft2 = fft(arr2);
@@ -2670,7 +2690,7 @@ struct Stride(R) {
     Unqual!R range;
     size_t _nSteps;
     size_t _length;
-    alias ElementType!(R) E;
+    alias E = ElementType!(R);
 
     this(R range, size_t nStepsIn) {
         this.range = range;
@@ -2746,7 +2766,7 @@ void slowFourier2(Ret, R)(R range, Ret buf) {
 // Hard-coded base case for FFT of size 4.  Doesn't work as well as the size
 // 2 case.
 void slowFourier4(Ret, R)(R range, Ret buf) {
-    alias ElementType!Ret C;
+    alias C = ElementType!Ret;
 
     assert(range.length == 4);
     assert(buf.length == 4);

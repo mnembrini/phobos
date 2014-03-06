@@ -18,10 +18,10 @@ Copyright: Copyright Andrei Alexandrescu 2008 - 2009.
 License:   <a href="http://www.boost.org/LICENSE_1_0.txt">Boost License 1.0</a>.
 Authors:   $(WEB erdani.org, Andrei Alexandrescu)
 Credits:   This module and its documentation are inspired by Perl's $(WEB
-                   perldoc.perl.org/Getopt/Long.html, Getopt::Long) module. The syntax of
-                   D's $(D getopt) is simpler than its Perl counterpart because $(D
-                   getopt) infers the expected parameter types from the static types of
-                   the passed-in pointers.
+           perldoc.perl.org/Getopt/Long.html, Getopt::Long) module. The syntax of
+           D's $(D getopt) is simpler than its Perl counterpart because $(D
+           getopt) infers the expected parameter types from the static types of
+           the passed-in pointers.
 Source:    $(PHOBOSSRC std/_getopt.d)
 */
 /*
@@ -41,7 +41,9 @@ version (unittest)
 }
 
 /**
- Synopsis:
+   Parse and remove command line options from an string array.
+
+   Synopsis:
 
 ---------
 import std.getopt;
@@ -79,18 +81,24 @@ void main(string[] args)
  to their defaults and then invoke $(D getopt). If a
  command-line argument is recognized as an option with a parameter and
  the parameter cannot be parsed properly (e.g. a number is expected
- but not present), a $(D ConvException) exception is thrown.
+ but not present), a $(D Exception) exception is thrown.
 
  Depending on the type of the pointer being bound, $(D getopt)
  recognizes the following kinds of options:
 
- $(OL $(LI $(I Boolean options). These are the simplest options; all
- they do is set a Boolean to $(D true):
+ $(OL $(LI $(I Boolean options). A lone argument sets the option to $(D true).
+ Additionally $(B true) or $(B false) can be set within the option separated with
+ an "=" sign:
 
 ---------
-  bool verbose, debugging;
+  bool verbose = false, debugging = true;
   getopt(args, "verbose", &verbose, "debug", &debugging);
 ---------
+
+ To set $(D verbose) to $(D true), invoke the program with either $(D
+ --verbose) or $(D --verbose=true).
+
+ To set $(D debugging) to $(D false), invoke the program with $(D --debugging=false).
 
  )$(LI $(I Numeric options.) If an option is bound to a numeric type, a
  number is expected as the next option, or right within the option
@@ -172,15 +180,15 @@ Invoking the program with e.g. "--tune=alpha=0.5 --tune beta=0.6" will
 set $(D tuningParms) to [ "alpha" : 0.5, "beta" : 0.6 ]. In general,
 keys and values can be of any parsable types.)
 
-$(LI $(I Delegate options.) An option can be bound to a delegate with
-the signature $(D void delegate()), $(D void delegate(string option))
-or $(D void delegate(string option, string value)).
+$(LI $(I Callback options.) An option can be bound to a function or
+delegate with the signature $(D void function()), $(D void function(string option)),
+$(D void function(string option, string value)), or their delegate equivalents.
 
-$(UL $(LI In the $(D void delegate()) case, the delegate is invoked
-whenever the option is seen.) $(LI In the $(D void delegate(string
-option)) case, the option string (without the leading dash(es)) is
-passed to the delegate. After that, the option string is considered
-handled and removed from the options array.
+$(UL $(LI If the callback doesn't take any arguments, the callback is invoked
+whenever the option is seen.) $(LI If the callback takes one string argument,
+the option string (without the leading dash(es)) is passed to the callback.
+After that, the option string is considered handled and removed from the
+options array.
 
 ---------
 void main(string[] args)
@@ -202,10 +210,10 @@ void main(string[] args)
 }
 ---------
 
-)$(LI In the $(D void delegate(string option, string value)) case, the
+)$(LI If the callback takes two string arguments, the
 option string is handled as an option with one argument, and parsed
 accordingly. The option and its value are passed to the
-delegate. After that, whatever was passed to the delegate is
+callback. After that, whatever was passed to the callback is
 considered handled and removed from the list.
 
 ---------
@@ -337,7 +345,6 @@ to another program). Invoking the example above with $(D "--foo -- --bar")
 parses foo but leaves "--bar" in $(D args). The double-dash itself is
 removed from the argument array.
 */
-
 void getopt(T...)(ref string[] args, T opts) {
     enforce(args.length,
             "Invalid arguments string passed: program name missing");
@@ -346,11 +353,11 @@ void getopt(T...)(ref string[] args, T opts) {
 }
 
 /**
- * Configuration options for $(D getopt). You can pass them to $(D
- * getopt) in any position, except in between an option string and its
- * bound pointer.
- */
-
+   Configuration options for $(D getopt). 
+   
+   You can pass them to $(D getopt) in any position, except in between an option 
+   string and its bound pointer.
+*/
 enum config {
     /// Turns case sensitivity on
     caseSensitive,
@@ -366,7 +373,7 @@ enum config {
     noPassThrough,
     /// Stop at first argument that does not look like an option
     stopOnFirstNonOption,
-};
+}
 
 private void getoptImpl(T...)(ref string[] args,
     ref configuration cfg, T opts)
@@ -398,14 +405,19 @@ private void getoptImpl(T...)(ref string[] args,
     else
     {
         // no more options to look for, potentially some arguments left
-        foreach (a ; args[1 .. $]) {
+        foreach (i, a ; args[1 .. $]) {
             if (!a.length || a[0] != optionChar)
             {
                 // not an option
                 if (cfg.stopOnFirstNonOption) break;
                 continue;
             }
-            if (endOfOptions.length && a == endOfOptions) break;
+            if (endOfOptions.length && a == endOfOptions)
+            {
+                // Consume the "--"
+                args = args.remove(i + 1);
+                break;
+            }
             if (!cfg.passThrough)
             {
                 throw new Exception("Unrecognized option "~a);
@@ -431,13 +443,21 @@ void handleOption(R)(string option, R receiver, ref string[] args,
                 a[1] != optionChar)
         {
             string[] expanded;
-            foreach (dchar c; a[1 .. $])
+            foreach (j, dchar c; a[1 .. $])
             {
+                // If the character is not alpha, stop right there. This allows
+                // e.g. -j100 to work as "pass argument 100 to option -j".
+                if (!isAlpha(c))
+                {
+                    expanded ~= a[j + 1 .. $];
+                    break;
+                }
                 expanded ~= text(optionChar, c);
             }
             args = args[0 .. i] ~ expanded ~ args[i + 1 .. $];
             continue;
         }
+
         string val;
         if (!optMatch(a, option, val, cfg))
         {
@@ -451,17 +471,25 @@ void handleOption(R)(string option, R receiver, ref string[] args,
 
         static if (is(typeof(*receiver) == bool))
         {
+            // parse '--b=true/false'
+            if (val.length)
+            {
+                *receiver = to!(typeof(*receiver))(val);
+                break;
+            }
+
+            // no argument means set it to true
             *receiver = true;
             break;
         }
         else
         {
             // non-boolean option, which might include an argument
-            //enum isDelegateWithOneParameter = is(typeof(receiver("")) : void);
-            enum isDelegateWithLessThanTwoParameters =
-                is(typeof(receiver) == delegate) &&
+            //enum isCallbackWithOneParameter = is(typeof(receiver("")) : void);
+            enum isCallbackWithLessThanTwoParameters =
+                (is(typeof(receiver) == delegate) || is(typeof(*receiver) == function)) &&
                 !is(typeof(receiver("", "")));
-            if (!isDelegateWithLessThanTwoParameters && !(val.length) && !incremental) {
+            if (!isCallbackWithLessThanTwoParameters && !(val.length) && !incremental) {
                 // Eat the next argument too.  Check to make sure there's one
                 // to be eaten first, though.
                 enforce(i < args.length,
@@ -471,8 +499,7 @@ void handleOption(R)(string option, R receiver, ref string[] args,
             }
             static if (is(typeof(*receiver) == enum))
             {
-                // enum receiver
-                *receiver = parse!(typeof(*receiver))(val);
+                *receiver = to!(typeof(*receiver))(val);
             }
             else static if (is(typeof(*receiver) : real))
             {
@@ -485,7 +512,8 @@ void handleOption(R)(string option, R receiver, ref string[] args,
                 // string receiver
                 *receiver = to!(typeof(*receiver))(val);
             }
-            else static if (is(typeof(receiver) == delegate))
+            else static if (is(typeof(receiver) == delegate) ||
+                            is(typeof(*receiver) == function))
             {
                 static if (is(typeof(receiver("", "")) : void))
                 {
@@ -513,8 +541,8 @@ void handleOption(R)(string option, R receiver, ref string[] args,
             else static if (isAssociativeArray!(typeof(*receiver)))
             {
                 // hash receiver
-                alias typeof(receiver.keys[0]) K;
-                alias typeof(receiver.values[0]) V;
+                alias K = typeof(receiver.keys[0]);
+                alias V = typeof(receiver.values[0]);
                 auto j = std.string.indexOf(val, assignChar);
                 auto key = val[0 .. j], value = val[j + 1 .. $];
                 (*receiver)[to!(K)(key)] = to!(V)(value);
@@ -529,22 +557,24 @@ void handleOption(R)(string option, R receiver, ref string[] args,
 }
 
 /**
-   The option character. Defaults to '-' but it can be assigned to
-   prior to calling $(D getopt).
+   The option character (default '-'). 
+
+   Defaults to '-' but it can be assigned to prior to calling $(D getopt).
  */
 dchar optionChar = '-';
 
 /**
-   The string that conventionally marks the end of all
-   options. Defaults to "--" but can be assigned to prior to calling
-   $(D getopt). Assigning an empty string to $(D endOfOptions)
-   effectively disables it.
+   The string that conventionally marks the end of all options (default '--'). 
+
+   Defaults to "--" but can be assigned to prior to calling $(D getopt). Assigning an 
+   empty string to $(D endOfOptions) effectively disables it.
  */
 string endOfOptions = "--";
 
 /**
-   The assignment character used in options with parameters. Defaults
-   to '=' but can be assigned to prior to calling $(D getopt).
+   The assignment character used in options with parameters (default '='). 
+
+   Defaults to '=' but can be assigned to prior to calling $(D getopt).
  */
 dchar assignChar = '=';
 
@@ -573,7 +603,7 @@ private bool optMatch(string arg, string optPattern, ref string value,
     // yank the second '-' if present
     if (isLong) arg = arg[1 .. $];
     immutable eqPos = std.string.indexOf(arg, assignChar);
-    if (eqPos >= 0)
+    if (isLong && eqPos >= 0)
     {
         // argument looks like --opt=value
         value = arg[eqPos + 1 .. $];
@@ -629,6 +659,7 @@ private void setConfig(ref configuration cfg, config option)
 
 unittest
 {
+    import std.math;
     uint paranoid = 2;
     string[] args = (["program.name",
                       "--paranoid", "--paranoid", "--paranoid"]).dup;
@@ -675,8 +706,8 @@ unittest
     getopt(args, "tune", &tuningParms);
     assert(args.length == 1);
     assert(tuningParms.length == 2);
-    assert(tuningParms["alpha"] == 0.5);
-    assert(tuningParms["beta"] == 0.6);
+    assert(approxEqual(tuningParms["alpha"], 0.5));
+    assert(approxEqual(tuningParms["beta"], 0.6));
 
     uint verbosityLevel = 1;
     void myHandler(string option)
@@ -743,6 +774,39 @@ unittest
         "foo", &foo,
         "bar", &bar);
     assert(foo && !bar && args[1] == "nonoption" && args[2] == "--zab");
+
+    args = (["program.name", "--fb1", "--fb2=true", "--tb1=false"]).dup;
+    bool fb1, fb2;
+    bool tb1 = true;
+    getopt(args, "fb1", &fb1, "fb2", &fb2, "tb1", &tb1);
+    assert(fb1 && fb2 && !tb1);
+
+    // test function callbacks
+
+    static class MyEx : Exception
+    {
+        this() { super(""); }
+        this(string option) { this(); this.option = option; }
+        this(string option, string value) { this(option); this.value = value; }
+
+        string option;
+        string value;
+    }
+
+    static void myStaticHandler1() { throw new MyEx(); }
+    args = (["program.name", "--verbose"]).dup;
+    try { getopt(args, "verbose", &myStaticHandler1); assert(0); }
+    catch (MyEx ex) { assert(ex.option is null && ex.value is null); }
+
+    static void myStaticHandler2(string option) { throw new MyEx(option); }
+    args = (["program.name", "--verbose"]).dup;
+    try { getopt(args, "verbose", &myStaticHandler2); assert(0); }
+    catch (MyEx ex) { assert(ex.option == "verbose" && ex.value is null); }
+
+    static void myStaticHandler3(string option, string value) { throw new MyEx(option, value); }
+    args = (["program.name", "--verbose", "2"]).dup;
+    try { getopt(args, "verbose", &myStaticHandler3); assert(0); }
+    catch (MyEx ex) { assert(ex.option == "verbose" && ex.value == "2"); }
 }
 
 unittest
@@ -779,4 +843,63 @@ unittest
     auto args = ["", "-t", "a=1"];
     getopt(args, "t", &foo);
     assert(foo == ["a":1]);
+}
+
+unittest
+{
+    // From bugzilla 9583
+    int opt;
+    auto args = ["prog", "--opt=123", "--", "--a", "--b", "--c"];
+    getopt(args, "opt", &opt);
+    assert(args == ["prog", "--a", "--b", "--c"]);
+}
+
+unittest
+{
+    string foo, bar;
+    auto args = ["prog", "-thello", "-dbar=baz"];
+    getopt(args, "t", &foo, "d", &bar);
+    assert(foo == "hello");
+    assert(bar == "bar=baz");
+    // From bugzilla 5762
+    string a;
+    args = ["prog", "-a-0x12"];
+    getopt(args, config.bundling, "a|addr", &a);
+    assert(a == "-0x12", a);
+    args = ["prog", "--addr=-0x12"];
+    getopt(args, config.bundling, "a|addr", &a);
+    assert(a == "-0x12");
+    // From https://d.puremagic.com/issues/show_bug.cgi?id=11764
+    args = ["main", "-test"];
+    bool opt;
+    args.getopt(config.passThrough, "opt", &opt);
+    assert(args == ["main", "-test"]);
+}
+
+unittest // From bugzilla 7693
+{
+    enum Foo {
+        bar,
+        baz
+    }
+
+    auto args = ["prog", "--foo=barZZZ"];
+    Foo foo;
+    assertThrown(getopt(args, "foo", &foo));
+    args = ["prog", "--foo=bar"];
+    assertNotThrown(getopt(args, "foo", &foo));
+    args = ["prog", "--foo", "barZZZ"];
+    assertThrown(getopt(args, "foo", &foo));
+    args = ["prog", "--foo", "baz"];
+    assertNotThrown(getopt(args, "foo", &foo));
+}
+
+unittest // same bug as 7693 only for bool
+{
+    auto args = ["prog", "--foo=truefoobar"];
+    bool foo;
+    assertThrown(getopt(args, "foo", &foo));
+    args = ["prog", "--foo"];
+    getopt(args, "foo", &foo);
+	assert(foo);
 }

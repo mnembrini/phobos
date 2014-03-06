@@ -13,16 +13,12 @@
  *    (See accompanying file LICENSE_1_0.txt or copy at
  *          http://www.boost.org/LICENSE_1_0.txt)
  */
-version(Win64) {}
-else
-{
+
 public import std.base64;
 public import std.compiler;
 public import std.concurrency;
 public import std.conv;
-public import std.cpuid;
 public import std.cstream;
-public import std.ctype;
 public import std.datetime;
 public import std.demangle;
 public import std.file;
@@ -30,16 +26,14 @@ public import std.format;
 public import std.getopt;
 public import std.math;
 public import std.mathspecial;
-public import std.md5;
 public import std.metastrings;
 public import std.mmfile;
 public import std.outbuffer;
 public import std.parallelism;
 public import std.path;
-public import std.perf;
 public import std.process;
 public import std.random;
-public import std.regexp;
+public import std.regex;
 public import std.signals;
 //public import std.slist;
 public import std.socket;
@@ -66,23 +60,16 @@ public import std.digest.crc;
 public import std.digest.sha;
 public import std.digest.md;
 
-}
-
 int main(char[][] args)
-{
-
-version(Win64) {}
-else
 {
     // Bring in unit test for module by referencing function in it
 
     cmp("foo", "bar");                  // string
-    fncharmatch('a', 'b');              // path
+    filenameCharCmp('a', 'b');          // path
     isNaN(1.0);                         // math
     std.conv.to!double("1.0");          // std.conv
     OutBuffer b = new OutBuffer();      // outbuffer
-    std.ctype.tolower('A');             // ctype
-    RegExp r = new RegExp(null, null);  // regexp
+    auto r = regex("");                 // regex
     uint ranseed = std.random.unpredictableSeed;
     thisTid;
     int a[];
@@ -91,13 +78,10 @@ else
     Clock.currTime();                   // datetime
     Exception e = new ReadException(""); // stream
     din.eof();                           // cstream
-    isValidDchar(cast(dchar)0);                 // utf
-    std.uri.ascii2hex(0);                       // uri
-    std.zlib.adler32(0,null);                   // D.zlib
+    isValidDchar(cast(dchar)0);          // utf
+    std.uri.ascii2hex(0);                // uri
+    std.zlib.adler32(0,null);            // D.zlib
     auto t = task!cmp("foo", "bar");  // parallelism
-
-    ubyte[16] buf;
-    std.md5.sum(buf,"");
 
     creal c = 3.0 + 4.0i;
     c = sqrt(c);
@@ -122,7 +106,7 @@ else
 
     std.demangle.demangle("hello");
 
-    std.uni.isUniAlpha('A');
+    std.uni.isAlpha('A');
 
     std.file.exists("foo");
 
@@ -130,8 +114,6 @@ else
     foreach_reverse (k, dchar d; "hello"c) { }
 
     std.signals.linkin();
-
-    writefln(std.cpuid.toString());
 
     bool isEmail = std.net.isemail.isEmail("abc");
     auto http = std.net.curl.HTTP("dlang.org");
@@ -142,6 +124,5 @@ else
     auto crc = crc32Of("hello");
     auto string = toHexString(crc);
     puts("Success!");
-}
     return 0;
 }

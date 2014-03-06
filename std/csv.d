@@ -396,7 +396,7 @@ auto csvReader(Contents = string,
 // Test standard iteration over input.
 unittest
 {
-    string str = `one,"two ""quoted"""` ~ "\n\"three\nnew line\",""\nfive,six";
+    string str = `one,"two ""quoted"""` ~ "\n\"three\nnew line\",\nfive,six";
     auto records = csvReader(str);
 
     int count;
@@ -430,7 +430,7 @@ unittest
         int value;
     }
 
-    Layout ans[3];
+    Layout[3] ans;
     ans[0].name = "one";
     ans[0].value = 1;
     ans[1].name = "two";
@@ -481,7 +481,7 @@ unittest
         double other;
     }
 
-    Layout ans[2];
+    Layout[2] ans;
     ans[0].name = "\U00010143Hello";
     ans[0].value = 65;
     ans[0].other = 63.63;
@@ -528,7 +528,7 @@ unittest
 
     auto records = csvReader!Layout(str, ["b","c","a"]);
 
-    Layout ans[2];
+    Layout[2] ans;
     ans[0].name = "Hello";
     ans[0].value = 65;
     ans[0].other = 63.63;
@@ -700,7 +700,7 @@ unittest
             return text[0];
         }
     }
-    auto ir = InputRange("Name,Occupation,Salary\r"d
+    auto ir = InputRange("Name,Occupation,Salary\r"d~
           "Joe,Carpenter,300000\nFred,Blacksmith,400000\r\n"d);
 
     foreach(record; csvReader(ir, cast(string[])null))
@@ -1165,7 +1165,7 @@ public:
     void popFront()
     {
         // Skip last of record when header is depleted.
-        if(_popCount && _popCount.empty)
+        if(_popCount.ptr && _popCount.empty)
             while(!recordEnd())
             {
                 prime(1);
@@ -1178,7 +1178,7 @@ public:
                 if(_input.rowLength != 0)
                     if(_input.col != _input.rowLength)
                         throw new CSVException(
-                           format("Row %s's length %s does not match "
+                           format("Row %s's length %s does not match "~
                                   "previous length of %s.", _input.row,
                                   _input.col, _input.rowLength));
             return;
@@ -1187,7 +1187,7 @@ public:
                 if(_input.rowLength != 0)
                     if(_input.col > _input.rowLength)
                         throw new CSVException(
-                           format("Row %s's length %s does not match "
+                           format("Row %s's length %s does not match "~
                                   "previous length of %s.", _input.row,
                                   _input.col, _input.rowLength));
         }

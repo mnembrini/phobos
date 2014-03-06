@@ -1,13 +1,15 @@
 module std.c.windows.com;
+version (Windows):
 
 pragma(lib,"uuid");
 
-private import std.c.windows.windows;
-private import std.string;
+import core.atomic;
+import std.c.windows.windows;
+import std.string;
 
 alias WCHAR OLECHAR;
-alias OLECHAR *LPOLESTR;
-alias OLECHAR *LPCOLESTR;
+alias LPOLESTR = OLECHAR*;
+alias LPCOLESTR = OLECHAR*;
 
 enum
 {
@@ -37,7 +39,7 @@ struct GUID {          // size is 16
         DWORD Data1;
         WORD  Data2;
         WORD  Data3;
-        BYTE  Data4[8];
+        BYTE[8]  Data4;
 }
 
 enum
@@ -57,17 +59,17 @@ enum
 }
 
 enum
-{ 
+{
        COINIT_APARTMENTTHREADED   = 0x2,
        COINIT_MULTITHREADED       = 0x0,
        COINIT_DISABLE_OLE1DDE     = 0x4,
-       COINIT_SPEED_OVER_MEMORY   = 0x8 
+       COINIT_SPEED_OVER_MEMORY   = 0x8
 }
-alias DWORD COINIT;
+alias COINIT = DWORD;
 enum RPC_E_CHANGED_MODE = 0x80010106;
 
-alias const(GUID) IID;
-alias const(GUID) CLSID;
+alias IID = const(GUID);
+alias CLSID = const(GUID);
 
 extern (C)
 {
@@ -232,12 +234,12 @@ extern (System):
 
     ULONG AddRef()
     {
-        return InterlockedIncrement(&count);
+        return atomicOp!"+="(*cast(shared)&count, 1);
     }
 
     ULONG Release()
     {
-        LONG lRef = InterlockedDecrement(&count);
+        LONG lRef = atomicOp!"-="(*cast(shared)&count, 1);
         if (lRef == 0)
         {
             // free object

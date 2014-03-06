@@ -27,29 +27,30 @@ CP=cp
 DIR=\dmd2
 
 ## Visual C directories
-VCDIR="\Program Files (x86)\Microsoft Visual Studio 10.0\VC"
-SDKDIR="\Program Files (x86)\Microsoft SDKs\Windows\v7.0A"
+VCDIR=\Program Files (x86)\Microsoft Visual Studio 10.0\VC
+SDKDIR=\Program Files (x86)\Microsoft SDKs\Windows\v7.0A
 
 ## Flags for VC compiler
 
-#CFLAGS=/O2 /I$(VCDIR)\INCLUDE /I$(SDKDIR)\Include
-CFLAGS=/Zi /I$(VCDIR)\INCLUDE /I$(SDKDIR)\Include
+#CFLAGS=/Zi /nologo /I"$(VCDIR)\INCLUDE" /I"$(SDKDIR)\Include"
+CFLAGS=/O2 /nologo /I"$(VCDIR)\INCLUDE" /I"$(SDKDIR)\Include"
 
 ## Flags for dmd D compiler
 
-DFLAGS=-m$(MODEL) -O -release -w -d -property
-#DFLAGS=-m$(MODEL) -unittest -g -d
-#DFLAGS=-m$(MODEL) -unittest -cov -g -d
+DFLAGS=-m$(MODEL) -O -release -w
+#DFLAGS=-m$(MODEL) -unittest -g
+#DFLAGS=-m$(MODEL) -unittest -cov -g
 
 ## Flags for compiling unittests
 
-UDFLAGS=-g -m$(MODEL) -O -w -d -property
+UDFLAGS=-g -m$(MODEL) -O -w
 
 ## C compiler, linker, librarian
 
-CC=$(VCDIR)\bin\amd64\cl
-LD=$(VCDIR)\bin\amd64\link
-LIB=$(VCDIR)\bin\amd64\lib
+CC="$(VCDIR)\bin\amd64\cl"
+LD="$(VCDIR)\bin\amd64\link"
+AR="$(VCDIR)\bin\amd64\lib"
+MAKE=make
 
 ## D compiler
 
@@ -59,7 +60,7 @@ DMD=dmd
 
 ## Location of where to write the html documentation files
 
-DOCSRC = .
+DOCSRC = ../dlang.org
 STDDOC = $(DOCSRC)/std.ddoc
 
 DOC=..\..\html\d\phobos
@@ -115,14 +116,14 @@ SRC_STD_math=std\math.d
 SRC_STD_3= std\csv.d std\complex.d std\numeric.d std\bigint.d
 SRC_STD_3c= std\datetime.d std\metastrings.d std\bitmanip.d std\typecons.d
 
-SRC_STD_3a= std\uni.d std\base64.d std\md5.d std\ctype.d std\ascii.d \
+SRC_STD_3a= std\uni.d std\base64.d std\ascii.d \
     std\demangle.d std\uri.d std\mmfile.d std\getopt.d
 
 SRC_STD_3b= std\signals.d std\typetuple.d std\traits.d \
     std\encoding.d std\xml.d \
-    std\random.d std\regexp.d \
+    std\random.d \
     std\exception.d \
-    std\compiler.d std\cpuid.d \
+    std\compiler.d \
     std\system.d std\concurrency.d
 
 #can't place SRC_STD_DIGEST in SRC_STD_REST because of out-of-memory issues
@@ -138,12 +139,11 @@ SRC_STD_6c=std\zlib.d
 SRC_STD_6d=std\stream.d
 SRC_STD_6e=std\socket.d
 SRC_STD_6f=std\socketstream.d
-SRC_STD_6g=std\perf.d
-SRC_STD_6h=std\container.d
-SRC_STD_6i=std\conv.d
-SRC_STD_6j=std\zip.d
-SRC_STD_6k=std\cstream.d
-SRC_STD_6l=std\regex.d
+SRC_STD_6g=std\container.d
+SRC_STD_6h=std\conv.d
+SRC_STD_6i=std\zip.d
+SRC_STD_6j=std\cstream.d
+SRC_STD_6k=std\regex.d
 
 SRC_STD_7= \
 	std\stdint.d \
@@ -167,22 +167,21 @@ SRC_STD_ALL= $(SRC_STD_1_HEAVY) $(SRC_STD_2_HEAVY) $(SRC_STD_2a_HEAVY) \
 	$(SRC_STD_6i) \
 	$(SRC_STD_6j) \
 	$(SRC_STD_6k) \
-	$(SRC_STD_6l) \
 	$(SRC_STD_7)
 
-SRC=	unittest.d crc32.d index.d
+SRC=	unittest.d index.d
 
 SRC_STD= std\zlib.d std\zip.d std\stdint.d std\container.d std\conv.d std\utf.d std\uri.d \
 	std\math.d std\string.d std\path.d std\datetime.d \
-	std\ctype.d std\csv.d std\file.d std\compiler.d std\system.d \
-	std\outbuffer.d std\md5.d std\base64.d \
+	std\csv.d std\file.d std\compiler.d std\system.d \
+	std\outbuffer.d std\base64.d \
 	std\mmfile.d \
 	std\syserror.d \
-	std\regexp.d std\random.d std\stream.d std\process.d \
+	std\random.d std\stream.d std\process.d \
 	std\socket.d std\socketstream.d std\format.d \
-	std\stdio.d std\perf.d std\uni.d std\uuid.d \
+	std\stdio.d std\uni.d std\uuid.d \
 	std\cstream.d std\demangle.d \
-	std\signals.d std\cpuid.d std\typetuple.d std\traits.d \
+	std\signals.d std\typetuple.d std\traits.d \
 	std\metastrings.d std\getopt.d \
 	std\variant.d std\numeric.d std\bitmanip.d std\complex.d std\mathspecial.d \
 	std\functional.d std\algorithm.d std\array.d std\typecons.d \
@@ -211,13 +210,15 @@ SRC_STD_C_OSX= std\c\osx\socket.d
 
 SRC_STD_C_FREEBSD= std\c\freebsd\socket.d
 
-SRC_STD_INTERNAL= std\internal\processinit.d std\internal\uni.d std\internal\uni_tab.d
+SRC_STD_INTERNAL= std\internal\processinit.d std\internal\uni.d std\internal\uni_tab.d \
+	std\internal\unicode_tables.d std\internal\unicode_comp.d std\internal\unicode_decomp.d \
+	std\internal\unicode_grapheme.d std\internal\unicode_norm.d
 
 SRC_STD_INTERNAL_DIGEST= std\internal\digest\sha_SSSE3.d
 
 SRC_STD_INTERNAL_MATH= std\internal\math\biguintcore.d \
 	std\internal\math\biguintnoasm.d std\internal\math\biguintx86.d \
-    std\internal\math\gammafunction.d std\internal\math\errorfunction.d
+	std\internal\math\gammafunction.d std\internal\math\errorfunction.d
 
 SRC_STD_INTERNAL_WINDOWS= std\internal\windows\advapi32.d
 
@@ -225,7 +226,7 @@ SRC_ETC=
 
 SRC_ETC_C= etc\c\zlib.d etc\c\curl.d etc\c\sqlite3.d
 
-SRC_TO_COMPILE_NOT_STD= crc32.d \
+SRC_TO_COMPILE_NOT_STD= \
 	$(SRC_STD_NET) \
 	$(SRC_STD_C) \
 	$(SRC_STD_WIN) \
@@ -282,7 +283,6 @@ SRC_ZLIB= \
 DOCS=	$(DOC)\object.html \
 	$(DOC)\core_atomic.html \
 	$(DOC)\core_bitop.html \
-	$(DOC)\core_cpuid.html \
 	$(DOC)\core_exception.html \
 	$(DOC)\core_memory.html \
 	$(DOC)\core_runtime.html \
@@ -308,14 +308,12 @@ DOCS=	$(DOC)\object.html \
 	$(DOC)\std_complex.html \
 	$(DOC)\std_container.html \
 	$(DOC)\std_conv.html \
-	$(DOC)\std_cpuid.html \
 	$(DOC)\std_digest_crc.html \
 	$(DOC)\std_digest_sha.html \
 	$(DOC)\std_digest_md.html \
 	$(DOC)\std_digest_ripemd.html \
 	$(DOC)\std_digest_digest.html \
 	$(DOC)\std_cstream.html \
-	$(DOC)\std_ctype.html \
 	$(DOC)\std_csv.html \
 	$(DOC)\std_datetime.html \
 	$(DOC)\std_demangle.html \
@@ -329,19 +327,16 @@ DOCS=	$(DOC)\object.html \
 	$(DOC)\std_json.html \
 	$(DOC)\std_math.html \
 	$(DOC)\std_mathspecial.html \
-	$(DOC)\std_md5.html \
 	$(DOC)\std_metastrings.html \
 	$(DOC)\std_mmfile.html \
 	$(DOC)\std_numeric.html \
 	$(DOC)\std_outbuffer.html \
 	$(DOC)\std_parallelism.html \
 	$(DOC)\std_path.html \
-	$(DOC)\std_perf.html \
 	$(DOC)\std_process.html \
 	$(DOC)\std_random.html \
 	$(DOC)\std_range.html \
 	$(DOC)\std_regex.html \
-	$(DOC)\std_regexp.html \
 	$(DOC)\std_signals.html \
 	$(DOC)\std_socket.html \
 	$(DOC)\std_socketstream.html \
@@ -380,7 +375,7 @@ DOCS=	$(DOC)\object.html \
 	$(DOC)\etc_c_curl.html \
 	$(DOC)\etc_c_sqlite3.html \
 	$(DOC)\etc_c_zlib.html \
-	$(DOC)\phobos.html
+	$(DOC)\index.html
 
 $(LIB) : $(SRC_TO_COMPILE) \
 	$(ZLIB) $(DRUNTIMELIB) win32.mak win64.mak
@@ -406,35 +401,33 @@ UNITTEST_OBJS= unittest1.obj unittest2.obj unittest2a.obj \
 		unittest6i.obj \
 		unittest6j.obj \
 		unittest6k.obj \
-		unittest6l.obj \
-		unittest7.obj 
+		unittest7.obj
 
 unittest : $(LIB)
-	$(DMD) $(UDFLAGS) -c           -ofunittest1.obj $(SRC_STD_1_HEAVY)
-	$(DMD) $(UDFLAGS) -c           -ofunittest2.obj $(SRC_STD_2_HEAVY)
-	$(DMD) $(UDFLAGS) -c           -ofunittest2a.obj $(SRC_STD_2a_HEAVY)
-	$(DMD) $(UDFLAGS) -c           -ofunittestM.obj $(SRC_STD_math)
-	$(DMD) $(UDFLAGS) -c           -ofunittest3.obj $(SRC_STD_3)
+	$(DMD) $(UDFLAGS) -c -unittest -ofunittest1.obj $(SRC_STD_1_HEAVY)
+	$(DMD) $(UDFLAGS) -c -unittest -ofunittest2.obj $(SRC_STD_2_HEAVY)
+	$(DMD) $(UDFLAGS) -c -unittest -ofunittest2a.obj $(SRC_STD_2a_HEAVY)
+	$(DMD) $(UDFLAGS) -c -unittest -ofunittestM.obj $(SRC_STD_math)
+	$(DMD) $(UDFLAGS) -c -unittest -ofunittest3.obj $(SRC_STD_3)
 	$(DMD) $(UDFLAGS) -c -unittest -ofunittest3a.obj $(SRC_STD_3a)
-	$(DMD) $(UDFLAGS) -c           -ofunittest3b.obj $(SRC_STD_3b)
-	$(DMD) $(UDFLAGS) -c           -ofunittest3c.obj $(SRC_STD_3c)
-	$(DMD) $(UDFLAGS) -c           -ofunittest4.obj $(SRC_STD_4)
-	$(DMD) $(UDFLAGS) -c           -ofunittest5.obj $(SRC_STD_5_HEAVY)
-	$(DMD) $(UDFLAGS) -c           -ofunittest6a.obj $(SRC_STD_6a)
-	$(DMD) $(UDFLAGS) -c           -ofunittest6b.obj $(SRC_STD_6b)
-	$(DMD) $(UDFLAGS) -c           -ofunittest6c.obj $(SRC_STD_6c)
-	$(DMD) $(UDFLAGS) -c           -ofunittest6d.obj $(SRC_STD_6d)
-	$(DMD) $(UDFLAGS) -c           -ofunittest6e.obj $(SRC_STD_6e)
-	$(DMD) $(UDFLAGS) -c           -ofunittest6h.obj $(SRC_STD_6h)
-	$(DMD) $(UDFLAGS) -c           -ofunittest6i.obj $(SRC_STD_6i)
+	$(DMD) $(UDFLAGS) -c -unittest -ofunittest3b.obj $(SRC_STD_3b)
+	$(DMD) $(UDFLAGS) -c -unittest -ofunittest3c.obj $(SRC_STD_3c)
+	$(DMD) $(UDFLAGS) -c -unittest -ofunittest4.obj $(SRC_STD_4)
+	$(DMD) $(UDFLAGS) -c -unittest -ofunittest5.obj $(SRC_STD_5_HEAVY)
+	$(DMD) $(UDFLAGS) -c -unittest -ofunittest6a.obj $(SRC_STD_6a)
+	$(DMD) $(UDFLAGS) -c -unittest -ofunittest6b.obj $(SRC_STD_6b)
+	$(DMD) $(UDFLAGS) -c -unittest -ofunittest6c.obj $(SRC_STD_6c)
+	$(DMD) $(UDFLAGS) -c -unittest -ofunittest6d.obj $(SRC_STD_6d)
+	$(DMD) $(UDFLAGS) -c -unittest -ofunittest6e.obj $(SRC_STD_6e)
+	$(DMD) $(UDFLAGS) -c -unittest -ofunittest6h.obj $(SRC_STD_6h)
+	$(DMD) $(UDFLAGS) -c -unittest -ofunittest6i.obj $(SRC_STD_6i)
 	$(DMD) $(UDFLAGS) -c -unittest -ofunittest6f.obj $(SRC_STD_6f)
 	$(DMD) $(UDFLAGS) -c -unittest -ofunittest6g.obj $(SRC_STD_6g)
 	$(DMD) $(UDFLAGS) -c -unittest -ofunittest6j.obj $(SRC_STD_6j)
 	$(DMD) $(UDFLAGS) -c -unittest -ofunittest6k.obj $(SRC_STD_6k)
-	$(DMD) $(UDFLAGS) -c -unittest -ofunittest6l.obj $(SRC_STD_6l)
-	$(DMD) $(UDFLAGS) -c           -ofunittest7.obj $(SRC_STD_7)
+	$(DMD) $(UDFLAGS) -c -unittest -ofunittest7.obj $(SRC_STD_7)
 	$(DMD) $(UDFLAGS) -c -unittest -ofunittest8.obj $(SRC_TO_COMPILE_NOT_STD)
-	$(DMD) $(UDFLAGS)    -unittest unittest.d $(UNITTEST_OBJS) \
+	$(DMD) $(UDFLAGS) -L/OPT:NOICF -unittest unittest.d $(UNITTEST_OBJS) \
 	    $(ZLIB) $(DRUNTIMELIB)
 	.\unittest.exe
 
@@ -455,7 +448,7 @@ html : $(DOCS)
 
 $(ZLIB): $(SRC_ZLIB)
 	cd etc\c\zlib
-	make -f win$(MODEL).mak zlib$(MODEL).lib
+	$(MAKE) -f win$(MODEL).mak zlib$(MODEL).lib "CC=\$(CC)"\"" "LIB=\$(AR)"\"" "VCDIR=$(VCDIR)"
 	cd ..\..\..
 
 ################## DOCS ####################################
@@ -465,17 +458,14 @@ DDOCFLAGS=$(DFLAGS) -version=StdDdoc
 $(DOC)\object.html : $(STDDOC) $(DRUNTIME)\src\object_.d
 	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\object.html $(STDDOC) $(DRUNTIME)\src\object_.d -I$(DRUNTIME)\src\
 
-$(DOC)\phobos.html : $(STDDOC) index.d
-	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\phobos.html $(STDDOC) index.d
+$(DOC)\index.html : $(STDDOC) index.d
+	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\index.html $(STDDOC) index.d
 
 $(DOC)\core_atomic.html : $(STDDOC) $(DRUNTIME)\src\core\atomic.d
 	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\core_atomic.html $(STDDOC) $(DRUNTIME)\src\core\atomic.d -I$(DRUNTIME)\src\
 
 $(DOC)\core_bitop.html : $(STDDOC) $(DRUNTIME)\src\core\bitop.d
 	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\core_bitop.html $(STDDOC) $(DRUNTIME)\src\core\bitop.d -I$(DRUNTIME)\src\
-
-$(DOC)\core_cpuid.html : $(STDDOC) $(DRUNTIME)\src\core\cpuid.d
-	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\core_cpuid.html $(STDDOC) $(DRUNTIME)\src\core\cpuid.d -I$(DRUNTIME)\src\
 
 $(DOC)\core_exception.html : $(STDDOC) $(DRUNTIME)\src\core\exception.d
 	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\core_exception.html $(STDDOC) $(DRUNTIME)\src\core\exception.d -I$(DRUNTIME)\src\
@@ -552,14 +542,8 @@ $(DOC)\std_conv.html : $(STDDOC) std\conv.d
 $(DOC)\std_container.html : $(STDDOC) std\container.d
 	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\std_container.html $(STDDOC) std\container.d
 
-$(DOC)\std_cpuid.html : $(STDDOC) std\cpuid.d
-	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\std_cpuid.html $(STDDOC) std\cpuid.d
-
 $(DOC)\std_cstream.html : $(STDDOC) std\cstream.d
 	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\std_cstream.html $(STDDOC) std\cstream.d
-
-$(DOC)\std_ctype.html : $(STDDOC) std\ctype.d
-	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\std_ctype.html $(STDDOC) std\ctype.d
 
 $(DOC)\std_csv.html : $(STDDOC) std\csv.d
 	$(DMD) -c -o- $(DFLAGS) -Df$(DOC)\std_csv.html $(STDDOC) std\csv.d
@@ -597,9 +581,6 @@ $(DOC)\std_math.html : $(STDDOC) std\math.d
 $(DOC)\std_mathspecial.html : $(STDDOC) std\mathspecial.d
 	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\std_mathspecial.html $(STDDOC) std\mathspecial.d
 
-$(DOC)\std_md5.html : $(STDDOC) std\md5.d
-	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\std_md5.html $(STDDOC) std\md5.d
-
 $(DOC)\std_metastrings.html : $(STDDOC) std\metastrings.d
 	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\std_metastrings.html $(STDDOC) std\metastrings.d
 
@@ -618,9 +599,6 @@ $(DOC)\std_parallelism.html : $(STDDOC) std\parallelism.d
 $(DOC)\std_path.html : $(STDDOC) std\path.d
 	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\std_path.html $(STDDOC) std\path.d
 
-$(DOC)\std_perf.html : $(STDDOC) std\perf.d
-	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\std_perf.html $(STDDOC) std\perf.d
-
 $(DOC)\std_process.html : $(STDDOC) std\process.d
 	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\std_process.html $(STDDOC) std\process.d
 
@@ -632,9 +610,6 @@ $(DOC)\std_range.html : $(STDDOC) std\range.d
 
 $(DOC)\std_regex.html : $(STDDOC) std\regex.d
 	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\std_regex.html $(STDDOC) std\regex.d
-
-$(DOC)\std_regexp.html : $(STDDOC) std\regexp.d
-	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\std_regexp.html $(STDDOC) std\regexp.d
 
 $(DOC)\std_signals.html : $(STDDOC) std\signals.d
 	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\std_signals.html $(STDDOC) std\signals.d
@@ -652,7 +627,7 @@ $(DOC)\std_stdio.html : $(STDDOC) std\stdio.d
 	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\std_stdio.html $(STDDOC) std\stdio.d
 
 $(DOC)\std_stream.html : $(STDDOC) std\stream.d
-	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\std_stream.html -d $(STDDOC) std\stream.d
+	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\std_stream.html $(STDDOC) std\stream.d
 
 $(DOC)\std_string.html : $(STDDOC) std\string.d
 	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\std_string.html $(STDDOC) std\string.d
@@ -661,7 +636,7 @@ $(DOC)\std_system.html : $(STDDOC) std\system.d
 	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\std_system.html $(STDDOC) std\system.d
 
 $(DOC)\std_thread.html : $(STDDOC) $(DRUNTIME)\src\core\thread.d
-	$(DMD) -c -o- -d $(DDOCFLAGS) -Df$(DOC)\std_thread.html $(STDDOC) -I$(DRUNTIME)\src $(DRUNTIME)\src\core\thread.d
+	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\std_thread.html $(STDDOC) -I$(DRUNTIME)\src $(DRUNTIME)\src\core\thread.d
 
 $(DOC)\std_traits.html : $(STDDOC) std\traits.d
 	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\std_traits.html $(STDDOC) std\traits.d
@@ -800,7 +775,7 @@ phobos.zip : zip
 
 clean:
 	cd etc\c\zlib
-	make -f win$(MODEL).mak clean
+	$(MAKE) -f win$(MODEL).mak clean
 	cd ..\..\..
 	del $(DOCS)
 	del $(UNITTEST_OBJS) unittest.obj unittest.exe
@@ -811,7 +786,7 @@ cleanhtml:
 	del $(DOCS)
 
 install: phobos.zip
-	$(CP) phobos.lib phobos64.lib $(DIR)\windows\lib\ 
-	$(CP) $(DRUNTIME)\lib\gcstub.obj $(DRUNTIME)\lib\gcstub64.obj $(DIR)\windows\lib\ 
-	+rd/s/q $(DIR)\src\phobos\ 
-	unzip -o phobos.zip -d $(DIR)\src\phobos\ 
+	$(CP) phobos.lib phobos64.lib $(DIR)\windows\lib
+	$(CP) $(DRUNTIME)\lib\gcstub.obj $(DRUNTIME)\lib\gcstub64.obj $(DIR)\windows\lib
+	+rd/s/q $(DIR)\src\phobos
+	unzip -o phobos.zip -d $(DIR)\src\phobos
